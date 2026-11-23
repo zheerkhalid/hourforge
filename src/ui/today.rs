@@ -52,6 +52,16 @@ impl TodayView {
         self.pending = Some(view.to_string());
     }
 
+    /// The day on the page.
+    pub fn day_shown(&self, today: Day) -> Day {
+        self.day.unwrap_or(today)
+    }
+
+    /// Shows `day`; today itself keeps following the calendar.
+    pub fn show_day(&mut self, day: Day, today: Day) {
+        self.day = Some(day).filter(|d| *d != today);
+    }
+
     fn load(&mut self, cx: &Cx, day: Day) {
         let minute = if day == cx.today { cx.now / 60 } else { 0 };
         if let Some(d) = &self.data {
@@ -116,7 +126,9 @@ impl TodayView {
                 cx.actions.push(Action::OpenTimeline { day, block: None });
             }
             ui.add_space(6.0);
-            if widgets::icon_button(ui, Icon::CHEVRON_RIGHT, "Next day").clicked() {
+            // There is nothing to see in days that have not happened yet.
+            if widgets::icon_button(ui, Icon::CHEVRON_RIGHT, "Next day").clicked() && day < cx.today
+            {
                 go = Some(Some(day + 1).filter(|d| *d != cx.today));
             }
             if widgets::ghost_button_enabled(ui, "Today", day != cx.today).clicked() {

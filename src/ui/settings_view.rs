@@ -142,6 +142,16 @@ impl App {
                     );
                 },
             );
+            widgets::setting_row(
+                ui,
+                "Weekly summary",
+                "At the start of each week, a notice near the clock with last week's hours, the busiest category and project. It never shows window titles; a click opens that week in the reports.",
+                |ui| {
+                    if widgets::toggle(ui, s.weekly_summary, true).clicked() {
+                        s.weekly_summary = !s.weekly_summary;
+                    }
+                },
+            );
             ui.label(
                 RichText::new(
                     "Locking the PC, sleep and signing out always end the current block.",

@@ -113,6 +113,7 @@ pub fn settings() -> Settings {
             rate: 85.0,
             keywords: vec!["atlas-shop".into(), "atlas".into()],
             archived: false,
+            non_billable: false,
         },
         Project {
             id: "orbit".into(),
@@ -122,6 +123,7 @@ pub fn settings() -> Settings {
             rate: 95.0,
             keywords: vec!["orbit-app".into(), "orbit".into()],
             archived: false,
+            non_billable: false,
         },
         Project {
             id: "meridian".into(),
@@ -131,6 +133,7 @@ pub fn settings() -> Settings {
             rate: 70.0,
             keywords: vec!["meridian".into()],
             archived: false,
+            non_billable: false,
         },
         Project {
             id: "internal".into(),
@@ -140,6 +143,7 @@ pub fn settings() -> Settings {
             rate: 0.0,
             keywords: vec!["handbook".into(), "timesheet".into(), "q4 budget".into()],
             archived: false,
+            non_billable: true,
         },
     ];
     s.goals = vec![
@@ -877,6 +881,90 @@ pub fn blocks() -> Vec<Block> {
     g.blocks
 }
 
+/// For `--view timeline-rtl`: gives part of today's invented blocks Kurdish
+/// and Arabic window titles, and adds a project with a Kurdish name, to show
+/// (and to test by eye) how right-to-left text is drawn.
+pub fn showcase_rtl(store: &mut Store, settings: &mut Settings) {
+    const TITLES: [&str; 6] = [
+        "ڕاپۆرتی مانگانەی فرۆشتن – پەڕگەی کار",
+        "پلانی پڕۆژەی ماڵپەڕی نوێ.docx",
+        "تقرير المبيعات الشهري 2026.xlsx",
+        "کۆبوونەوەی تیم – تێبینییەکان",
+        "قائمة المهام – مشروع الموقع",
+        "ماڵپەڕ: دیزاینی لاپەڕەی سەرەکی (v2)",
+    ];
+    if settings.project("malper").is_none() {
+        settings.projects.push(Project {
+            id: "malper".into(),
+            name: "ماڵپەڕی کۆمپانیا".into(),
+            client: "کۆمپانیای ڕێگا".into(),
+            color: [0xff, 0x92, 0x48],
+            rate: 60.0,
+            keywords: vec!["ماڵپەڕ".into(), "الموقع".into()],
+            archived: false,
+            non_billable: false,
+        });
+    }
+    let (from, to) = tz().day_bounds(tz().day_of(now()));
+    let mut changed = Vec::new();
+    let mut seen = 0;
+    for mut b in store.range(from, to) {
+        if b.kind != Kind::Active || b.title.is_empty() {
+            continue;
+        }
+        seen += 1;
+        if seen % 2 == 0 {
+            continue;
+        }
+        b.title = TITLES[(seen / 2) % TITLES.len()].to_string();
+        if seen % 6 == 1 {
+            b.note = "پێداچوونەوە لەگەڵ تیم".into();
+            b.tags = vec!["کار".into()];
+        }
+        changed.push(b);
+    }
+    let _ = store.put_many(&changed);
+}
+
+/// For `--view review`: turns part of the last week's invented time into
+/// programs and websites that no rule knows, so the Review page has
+/// something to show.
+pub fn showcase_review(store: &mut Store) {
+    const PROGRAMS: [(&str, &str); 3] = [
+        ("novaboard.exe", "Nova Board"),
+        ("ledgerly.exe", "Ledgerly"),
+        ("pixelpress.exe", "PixelPress"),
+    ];
+    const SITES: [&str; 3] = [
+        "papertrail.example",
+        "greenmarket.example",
+        "cloudnotes.example",
+    ];
+    let today = tz().day_of(now());
+    let (from, to) = (tz().day_start(today - 6), tz().day_start(today + 1));
+    let mut changed = Vec::new();
+    let mut seen = 0;
+    for mut b in store.range(from, to) {
+        if b.kind != Kind::Active {
+            continue;
+        }
+        seen += 1;
+        if !b.domain.is_empty() && seen % 5 == 0 {
+            b.domain = SITES[(seen / 5) % SITES.len()].to_string();
+            b.title = "Untitled page".into();
+        } else if b.domain.is_empty() && seen % 7 == 0 {
+            let (exe, app) = PROGRAMS[(seen / 7) % PROGRAMS.len()];
+            b.exe = exe.into();
+            b.app = app.into();
+            b.title = "Untitled".into();
+        } else {
+            continue;
+        }
+        changed.push(b);
+    }
+    let _ = store.put_many(&changed);
+}
+
 /// Fills the store with a few months of plausible invented activity ending at [`now`].
 pub fn populate(store: &mut Store, _settings: &Settings) {
     let _ = store.put_many(&blocks());
@@ -964,6 +1052,61 @@ mod tests {
         assert!(all
             .iter()
             .all(|b| b.domain.is_empty() || b.domain.ends_with(".example")));
+    }
+
+    #[test]
+    fn showcases_change_what_they_say() {
+        use crate::aggregate::Data;
+        // Right-to-left titles and a project that matches some of them.
+        let mut s = settings();
+        let mut store = Store::in_memory();
+        populate(&mut store, &s);
+        let before = store.range(0, i64::MAX).len();
+        showcase_rtl(&mut store, &mut s);
+        showcase_rtl(&mut store, &mut s);
+        assert_eq!(s.projects.len(), 5);
+        let (from, to) = tz().day_bounds(tz().day_of(now()));
+        let today = store.range(from, to);
+        assert_eq!(store.range(0, i64::MAX).len(), before);
+        let c = Classifier::new(&s);
+        let rtl = today
+            .iter()
+            .filter(|b| {
+                b.title
+                    .chars()
+                    .any(|ch| ('\u{600}'..='\u{6ff}').contains(&ch))
+            })
+            .count();
+        assert!(rtl >= 5, "{rtl} right-to-left titles");
+        assert!(today
+            .iter()
+            .any(|b| c.classify(b).project == c.project_index("malper")));
+
+        // Unknown programs and websites for the Review page.
+        let s = settings();
+        let c = Classifier::new(&s);
+        let mut store = Store::in_memory();
+        populate(&mut store, &s);
+        let today = tz().day_of(now());
+        let (from, to) = (tz().day_start(today - 13), tz().day_start(today + 1));
+        let review = |store: &mut Store| {
+            let blocks = store.range(from, to);
+            let spans = flatten(&blocks, from, to, &c);
+            let zone = tz();
+            let d = Data {
+                blocks: &blocks,
+                spans: &spans,
+                classifier: &c,
+                tz: &zone,
+            };
+            crate::digest::uncategorised(&d, 300)
+        };
+        // The plain demo has a rule for everything.
+        assert!(review(&mut store).is_empty());
+        showcase_review(&mut store);
+        let rows = review(&mut store);
+        assert!(rows.len() >= 4, "{rows:?}");
+        assert!(rows.iter().any(|r| r.is_site) && rows.iter().any(|r| !r.is_site));
     }
 
     #[test]

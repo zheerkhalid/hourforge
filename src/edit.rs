@@ -121,9 +121,93 @@ pub fn tags_text(tags: &[String]) -> String {
     tags.join(", ")
 }
 
+/// `existing` plus the tags of `more` it does not have yet (ignoring case).
+pub fn add_tags(existing: &[String], more: &[String]) -> Vec<String> {
+    let mut tags = existing.to_vec();
+    for tag in more {
+        if !tags.iter().any(|t| t.to_lowercase() == tag.to_lowercase()) {
+            tags.push(tag.clone());
+        }
+    }
+    tags
+}
+
+/// Whether a block matches what was typed in the timeline's search box.
+///
+/// Every word must be found, ignoring case, in the block's title, program,
+/// website, note, tags, category or project. A word that starts with `#`
+/// only looks at the tags (`#client` finds the tag `client` and
+/// `client-visit`).
+pub fn matches_search(block: &Block, query: &str, category: &str, project: &str) -> bool {
+    let haystack = [
+        block.title.as_str(),
+        block.app_label(),
+        block.exe.as_str(),
+        block.domain.as_str(),
+        block.note.as_str(),
+        category,
+        project,
+    ]
+    .join("\n")
+    .to_lowercase();
+    let tags: Vec<String> = block.tags.iter().map(|t| t.to_lowercase()).collect();
+    query.split_whitespace().all(|word| {
+        let word = word.to_lowercase();
+        match word.strip_prefix('#') {
+            Some(tag) => tags.iter().any(|t| t.starts_with(tag)),
+            None => haystack.contains(&word) || tags.iter().any(|t| t.contains(&word)),
+        }
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn search_looks_everywhere_and_tags_can_be_asked_for() {
+        let b = Block {
+            exe: "code.exe".into(),
+            app: "Visual Studio Code".into(),
+            title: "cart.rs - atlas-shop".into(),
+            domain: "docs.example".into(),
+            note: "Pairing with Sam".into(),
+            tags: vec!["client".into(), "Deep Work".into()],
+            ..Default::default()
+        };
+        let hit = |q: &str| matches_search(&b, q, "Development", "Atlas Web Shop");
+        assert!(hit(""));
+        assert!(hit("   "));
+        assert!(hit("CART"));
+        assert!(hit("studio"));
+        assert!(hit("docs.example"));
+        assert!(hit("pairing sam"));
+        assert!(hit("development"));
+        assert!(hit("web shop"));
+        assert!(hit("deep"));
+        assert!(hit("#client"));
+        assert!(hit("#cli cart"));
+        assert!(hit("#deep"));
+        // Every word has to match, and `#` looks at tags only.
+        assert!(!hit("cart missing"));
+        assert!(!hit("#cart"));
+        assert!(!hit("#work"));
+        // Other scripts: Kurdish titles are found, in any letter case rules.
+        let k = Block {
+            title: "ڕاپۆرتی مانگانە – ماڵپەڕ".into(),
+            ..Default::default()
+        };
+        assert!(matches_search(&k, "ماڵپەڕ", "", ""));
+        assert!(!matches_search(&k, "پلان", "", ""));
+    }
+
+    #[test]
+    fn tags_are_added_once() {
+        let have = vec!["client".to_string(), "Billable".to_string()];
+        let more = parse_tags("billable, urgent, CLIENT, urgent");
+        assert_eq!(add_tags(&have, &more), ["client", "Billable", "urgent"]);
+        assert_eq!(add_tags(&[], &more), ["billable", "urgent", "CLIENT"]);
+    }
     use crate::model::AwayLabel;
 
     fn block(id: u64, start: i64, end: i64) -> Block {

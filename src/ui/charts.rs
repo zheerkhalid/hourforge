@@ -161,7 +161,11 @@ pub fn legend(ui: &mut Ui, items: &[(Color32, String)]) {
         ui.spacing_mut().item_spacing = vec2(4.0, 2.0);
         for (color, name) in items {
             widgets::dot(ui, *color);
-            ui.label(RichText::new(name).size(12.5).color(p.muted));
+            if super::bidi::needs_native(name) {
+                super::bidi::label(ui, name, 12.5, false, p.muted);
+            } else {
+                ui.label(RichText::new(name).size(12.5).color(p.muted));
+            }
             ui.add_space(8.0);
         }
     });

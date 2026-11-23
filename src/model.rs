@@ -270,6 +270,18 @@ pub struct Project {
     pub keywords: Vec<String>,
     #[serde(default)]
     pub archived: bool,
+    /// Time on the project is tracked and reported but never charged: it
+    /// has no amount on timesheets and is left off invoices. (Stored this
+    /// way round so that projects made by older versions stay billable.)
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub non_billable: bool,
+}
+
+impl Project {
+    /// Whether time on the project is charged: billable and with a rate.
+    pub fn charged(&self) -> bool {
+        !self.non_billable && self.rate > 0.0
+    }
 }
 
 /// What a goal or limit measures.

@@ -1,7 +1,15 @@
 ; HourForge installer (Inno Setup 6). Per-user: no administrator rights needed.
 
 #ifndef AppVersion
-  #define AppVersion "1.0.0"
+  #define AppVersion "1.1.0"
+#endif
+; Where the build is. scripts\package.ps1 passes these when cargo builds
+; somewhere else (CARGO_TARGET_DIR).
+#ifndef ExePath
+  #define ExePath "..\target\release\HourForge.exe"
+#endif
+#ifndef IcoPath
+  #define IcoPath "..\target\hourforge.ico"
 #endif
 
 [Setup]
@@ -21,7 +29,7 @@ ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 OutputDir=..\dist
 OutputBaseFilename=HourForge-Setup
-SetupIconFile=..\target\hourforge.ico
+SetupIconFile={#IcoPath}
 UninstallDisplayIcon={app}\HourForge.exe
 Compression=lzma2/ultra64
 SolidCompression=yes
@@ -37,7 +45,7 @@ Name: "startup"; Description: "Start HourForge when I sign in to Windows (it tra
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 
 [Files]
-Source: "..\target\release\HourForge.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#ExePath}"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\LICENSE"; DestDir: "{app}"; DestName: "LICENSE.txt"; Flags: ignoreversion
 
 [Icons]

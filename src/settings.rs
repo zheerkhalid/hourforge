@@ -63,6 +63,10 @@ pub struct Timesheet {
     pub step_minutes: u32,
     /// Shown next to amounts; purely a label.
     pub currency: String,
+    /// Your name or business, printed on invoices under "From".
+    pub business: String,
+    /// A line at the foot of invoices: payment terms, bank details.
+    pub invoice_note: String,
 }
 
 impl Default for Timesheet {
@@ -71,6 +75,8 @@ impl Default for Timesheet {
             rounding: Rounding::Nearest,
             step_minutes: 15,
             currency: "USD".into(),
+            business: String::new(),
+            invoice_note: String::new(),
         }
     }
 }
@@ -109,6 +115,8 @@ pub struct Settings {
     pub break_reminder_minutes: u32,
     pub focus_minutes: u32,
     pub focus_break_minutes: u32,
+    /// A notification at the start of each week with last week's totals.
+    pub weekly_summary: bool,
 
     pub categories: Vec<Category>,
     pub rules: Vec<Rule>,
@@ -229,6 +237,7 @@ impl Default for Settings {
             break_reminder_minutes: 0,
             focus_minutes: 25,
             focus_break_minutes: 5,
+            weekly_summary: true,
             categories: default_categories(),
             rules: default_rules(),
             projects: Vec::new(),
@@ -245,13 +254,28 @@ impl Settings {
     }
 
     /// Loads the settings; a missing or damaged file gives the defaults.
+    ///
+    /// A file that is there but cannot be read as settings is first copied to
+    /// `settings.damaged.json`: the next save would otherwise replace the
+    /// user's categories, rules and projects with the defaults for good.
     pub fn load(dir: &Path) -> Settings {
-        let mut s: Settings = std::fs::read(Self::path(dir))
-            .ok()
-            .and_then(|bytes| serde_json::from_slice(&bytes).ok())
-            .unwrap_or_default();
+        let mut s: Settings = match std::fs::read(Self::path(dir)) {
+            Ok(bytes) => match serde_json::from_slice(&bytes) {
+                Ok(settings) => settings,
+                Err(_) => {
+                    let _ = std::fs::write(Self::damaged_path(dir), &bytes);
+                    Settings::default()
+                }
+            },
+            Err(_) => Settings::default(),
+        };
         s.repair();
         s
+    }
+
+    /// Where a settings file that could not be read is kept.
+    pub fn damaged_path(dir: &Path) -> PathBuf {
+        dir.join("settings.damaged.json")
     }
 
     /// Writes the settings (temporary file, then rename, so a crash never
@@ -390,10 +414,65 @@ mod tests {
         });
         s.save(&dir).unwrap();
         assert_eq!(Settings::load(&dir), s);
-        // Damaged file: defaults, no panic.
+        // Damaged file: defaults, no panic, and the damaged file is kept.
         std::fs::write(Settings::path(&dir), b"{ not json").unwrap();
         assert_eq!(Settings::load(&dir), Settings::default());
+        assert_eq!(
+            std::fs::read(Settings::damaged_path(&dir)).unwrap(),
+            b"{ not json"
+        );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A settings file as version 1.0.0 wrote it has none of the newer
+    /// fields. It must load as it was, with the new options at their defaults.
+    #[test]
+    fn settings_of_1_0_0_load_unchanged() {
+        let old = r#"{
+            "theme": "light",
+            "week_starts_monday": false,
+            "idle_minutes": 9,
+            "return_prompt": "notify",
+            "hotkey": "Ctrl+Alt+H",
+            "goals": [{"target": {"project": "atlas"}, "minutes": 90, "limit": false, "alert": true}],
+            "projects": [{
+                "id": "atlas", "name": "Atlas", "client": "Northwind",
+                "color": [79, 140, 255], "rate": 50.0,
+                "keywords": ["atlas"], "archived": false
+            }],
+            "privacy": {"record_titles": false, "record_domains": true,
+                        "hide_private_windows": true, "private_apps": [], "redactions": []},
+            "timesheet": {"rounding": "up", "step_minutes": 6, "currency": "EUR"}
+        }"#;
+        let mut s: Settings = serde_json::from_str(old).unwrap();
+        s.repair();
+        assert_eq!(s.theme, ThemeChoice::Light);
+        assert!(!s.week_starts_monday);
+        assert_eq!(s.idle_minutes, 9);
+        assert_eq!(s.return_prompt, ReturnPrompt::Notify);
+        assert_eq!(s.hotkey, "Ctrl+Alt+H");
+        assert_eq!(s.goals.len(), 1);
+        assert!(!s.privacy.record_titles);
+        assert_eq!(s.timesheet.rounding, Rounding::Up);
+        assert_eq!(s.timesheet.step_minutes, 6);
+        assert_eq!(s.timesheet.currency, "EUR");
+        // What 1.1 added.
+        assert!(s.weekly_summary);
+        assert_eq!(s.timesheet.business, "");
+        assert_eq!(s.timesheet.invoice_note, "");
+        let atlas = s.project("atlas").unwrap();
+        assert!(!atlas.non_billable && atlas.charged());
+        assert_eq!(atlas.rate, 50.0);
+        // A billable project is written exactly as before, so a settings
+        // file can still be read by 1.0.0 (which ignores what it does not know).
+        let json = serde_json::to_string(&s).unwrap();
+        assert!(!json.contains("non_billable"));
+        let mut marked = s.clone();
+        marked.projects[0].non_billable = true;
+        let json = serde_json::to_string(&marked).unwrap();
+        assert!(json.contains("\"non_billable\":true"));
+        assert_eq!(serde_json::from_str::<Settings>(&json).unwrap(), marked);
+        assert!(!marked.projects[0].charged());
     }
 
     #[test]

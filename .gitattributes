@@ -1,2 +1,4 @@
 * text=auto eol=lf
 *.png binary
+# Data folders written by released versions: kept byte for byte.
+tests/fixtures/** -text

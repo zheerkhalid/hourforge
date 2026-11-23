@@ -640,6 +640,7 @@ impl App {
         let today = self.today();
         let month_from = timeutil::month_start(today);
         let mut new_project = false;
+        let mut invoice = false;
         let mut timesheet: Option<Option<String>> = None;
         page_header(
             ui,
@@ -651,6 +652,14 @@ impl App {
                 }
                 if widgets::ghost_button(ui, &Icon::EXPORT.with("Timesheet…")).clicked() {
                     timesheet = Some(None);
+                }
+                if widgets::ghost_button(ui, &Icon::DOCUMENT.with("Invoice…"))
+                    .on_hover_text(
+                        "An invoice for the billable projects, as a page to print or save as PDF",
+                    )
+                    .clicked()
+                {
+                    invoice = true;
                 }
             },
         );
@@ -701,11 +710,17 @@ impl App {
                             });
                             ui.add_space(10.0);
                             ui.label(RichText::new("Currency").color(p.muted));
-                            ui.add(
-                                egui::TextEdit::singleline(&mut self.settings.timesheet.currency)
-                                    .desired_width(56.0)
-                                    .char_limit(6)
-                                    .margin(egui::Margin::symmetric(8, 6)),
+                            // Also for currencies written right to left (د.ع).
+                            super::bidi::show_edit(
+                                ui,
+                                &mut self.settings.timesheet.currency,
+                                14.0,
+                                p.text,
+                                |edit| {
+                                    edit.desired_width(56.0)
+                                        .char_limit(6)
+                                        .margin(egui::Margin::symmetric(8, 6))
+                                },
                             );
                         },
                     );
@@ -757,22 +772,26 @@ impl App {
                                     vec2(330.0, 48.0),
                                     egui::Layout::top_down(egui::Align::Min),
                                     |ui| {
+                                        // The same width in every card, so
+                                        // the keywords line up.
+                                        ui.set_min_width(330.0);
                                         ui.spacing_mut().item_spacing.y = 1.0;
                                         ui.horizontal(|ui| {
-                                            ui.add(
-                                                egui::Label::new(
-                                                    RichText::new(&pr.name)
-                                                        .font(semibold(15.5))
-                                                        .color(if pr.archived {
-                                                            p.muted
-                                                        } else {
-                                                            p.text
-                                                        }),
-                                                )
-                                                .truncate(),
+                                            super::bidi::label(
+                                                ui,
+                                                &pr.name,
+                                                15.5,
+                                                true,
+                                                if pr.archived { p.muted } else { p.text },
                                             );
                                             if pr.archived {
                                                 widgets::badge(ui, "Archived", p.faint);
+                                            }
+                                            if pr.non_billable {
+                                                widgets::badge(ui, "Not billable", p.muted)
+                                                    .on_hover_text(
+                                                        "Tracked and reported, but without an amount on timesheets and left off invoices",
+                                                    );
                                             }
                                         });
                                         let mut line = if pr.client.is_empty() {
@@ -780,23 +799,18 @@ impl App {
                                         } else {
                                             pr.client.clone()
                                         };
-                                        if pr.rate > 0.0 {
+                                        if pr.charged() {
                                             line.push_str(&format!(
                                                 "  ·  {currency} {:.2} / hour",
                                                 pr.rate
                                             ));
                                         }
-                                        ui.add(
-                                            egui::Label::new(
-                                                RichText::new(line).size(12.5).color(p.muted),
-                                            )
-                                            .truncate(),
-                                        );
+                                        super::bidi::label(ui, &line, 12.5, false, p.muted);
                                     },
                                 );
                                 // Keywords.
                                 ui.allocate_ui_with_layout(
-                                    vec2((ui.available_width() - 330.0).max(60.0), 48.0),
+                                    vec2((ui.available_width() - 320.0).max(60.0), 48.0),
                                     egui::Layout::left_to_right(egui::Align::Center),
                                     |ui| {
                                         ui.spacing_mut().item_spacing.x = 5.0;
@@ -867,7 +881,7 @@ impl App {
                                                         RichText::new(timeutil::fmt_dur(secs))
                                                             .font(semibold(16.0)),
                                                     );
-                                                    let sub = if pr.rate > 0.0 {
+                                                    let sub = if pr.charged() {
                                                         format!(
                                                             "this month  ·  {currency} {:.2}",
                                                             secs as f64 / 3600.0 * pr.rate
@@ -905,6 +919,16 @@ impl App {
                 today,
                 ExportKind::Timesheet,
                 project,
+            ));
+        }
+        if invoice {
+            // Invoices are usually written for the month that just ended.
+            let last = month_from - 1;
+            self.dialog = Some(Dialog::export(
+                timeutil::month_start(last),
+                last,
+                ExportKind::Invoice,
+                None,
             ));
         }
         if let Some(id) = edit {

@@ -4,6 +4,7 @@
 //! only parses the command line.
 pub mod aggregate;
 pub mod demo;
+pub mod digest;
 pub mod domain;
 pub mod edit;
 pub mod engine;

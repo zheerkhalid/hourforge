@@ -173,6 +173,13 @@ impl ReportsView {
         self.path.clear();
     }
 
+    /// Shows the week that contains `day`.
+    pub fn open_week(&mut self, day: Day) {
+        self.path.clear();
+        self.mode = Mode::Week;
+        self.anchor = Some(day);
+    }
+
     /// Shows this range of local days (both included).
     pub fn open_range(&mut self, from: Day, to: Day) {
         let (from, to) = (from.min(to), from.max(to));

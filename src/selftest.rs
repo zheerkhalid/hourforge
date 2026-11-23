@@ -55,6 +55,7 @@ fn settings() -> Settings {
             rate: 80.0,
             keywords: vec!["apollo".into()],
             archived: false,
+            non_billable: false,
         },
         Project {
             id: "zeus".into(),
@@ -64,6 +65,7 @@ fn settings() -> Settings {
             rate: 100.0,
             keywords: Vec::new(),
             archived: false,
+            non_billable: false,
         },
     ];
     s.privacy.private_apps = vec![
@@ -453,7 +455,38 @@ fn run_in(dir: &Path) -> Result<Vec<String>, String> {
         "HTML report is self-contained (no addresses, no scripts)",
         html.contains("Tue 10 Mar 2026") && !html.contains("http") && !html.contains("<script"),
     )?;
+    let ics = export::report(&input, Format::Ics);
+    check(
+        &mut log,
+        "calendar file: events for the sittings, no window titles in it",
+        ics.starts_with("BEGIN:VCALENDAR\r\n")
+            && ics.ends_with("END:VCALENDAR\r\n")
+            && ics.matches("BEGIN:VEVENT").count() >= 2
+            && ics.matches("BEGIN:VEVENT").count() == ics.matches("END:VEVENT").count()
+            && !blocks
+                .iter()
+                .any(|b| b.title.len() > 3 && ics.contains(b.title.as_str())),
+    )?;
     let sheet = export::timesheet(&input, None);
+    let invoice = export::invoice_html(
+        &sheet,
+        &input,
+        &export::InvoiceMeta {
+            number: "INV-TEST",
+            issued: day,
+            bill_to: "",
+        },
+    );
+    eq(
+        &mut log,
+        "invoice: one line per billable project, 260 due",
+        (
+            export::invoice_lines(&sheet).len(),
+            invoice.contains("Amount due</span><b>260.00 USD</b>"),
+            invoice.contains("http") || invoice.contains("<script"),
+        ),
+        (2, true, false),
+    )?;
     eq(
         &mut log,
         "timesheet: 1h 30m and 45m rounded up to the hour",

@@ -1,0 +1,1010 @@
+{
+  "theme": "dark",
+  "week_starts_monday": false,
+  "idle_minutes": 7,
+  "return_prompt": "ask",
+  "ask_min_minutes": 10,
+  "media_counts_active": true,
+  "close_to_tray": true,
+  "indicator": false,
+  "hotkey": "Ctrl+Alt+H",
+  "last_task": "",
+  "last_task_project": null,
+  "retention_days": 0,
+  "goals": [
+    {
+      "target": {
+        "project": "atlas"
+      },
+      "minutes": 120,
+      "limit": false,
+      "alert": true
+    }
+  ],
+  "break_reminder_minutes": 0,
+  "focus_minutes": 25,
+  "focus_break_minutes": 5,
+  "categories": [
+    {
+      "id": "development",
+      "name": "Development",
+      "color": [
+        79,
+        140,
+        255
+      ],
+      "score": "productive",
+      "builtin": true
+    },
+    {
+      "id": "writing",
+      "name": "Writing",
+      "color": [
+        34,
+        195,
+        166
+      ],
+      "score": "productive",
+      "builtin": true
+    },
+    {
+      "id": "communication",
+      "name": "Communication",
+      "color": [
+        245,
+        176,
+        65
+      ],
+      "score": "neutral",
+      "builtin": true
+    },
+    {
+      "id": "browsing",
+      "name": "Browsing",
+      "color": [
+        76,
+        201,
+        240
+      ],
+      "score": "neutral",
+      "builtin": true
+    },
+    {
+      "id": "design",
+      "name": "Design",
+      "color": [
+        236,
+        111,
+        177
+      ],
+      "score": "productive",
+      "builtin": true
+    },
+    {
+      "id": "media",
+      "name": "Media",
+      "color": [
+        240,
+        104,
+        92
+      ],
+      "score": "distracting",
+      "builtin": true
+    },
+    {
+      "id": "games",
+      "name": "Games",
+      "color": [
+        169,
+        113,
+        245
+      ],
+      "score": "distracting",
+      "builtin": true
+    },
+    {
+      "id": "utilities",
+      "name": "Utilities",
+      "color": [
+        127,
+        191,
+        95
+      ],
+      "score": "neutral",
+      "builtin": true
+    },
+    {
+      "id": "other",
+      "name": "Other",
+      "color": [
+        119,
+        130,
+        143
+      ],
+      "score": "neutral",
+      "builtin": true
+    }
+  ],
+  "rules": [
+    {
+      "field": "domain",
+      "pattern": "github.com",
+      "category": "development",
+      "enabled": true
+    },
+    {
+      "field": "domain",
+      "pattern": "gitlab.com",
+      "category": "development",
+      "enabled": true
+    },
+    {
+      "field": "domain",
+      "pattern": "stackoverflow.com",
+      "category": "development",
+      "enabled": true
+    },
+    {
+      "field": "domain",
+      "pattern": "docs.rs",
+      "category": "development",
+      "enabled": true
+    },
+    {
+      "field": "domain",
+      "pattern": "crates.io",
+      "category": "development",
+      "enabled": true
+    },
+    {
+      "field": "domain",
+      "pattern": "developer.mozilla.org",
+      "category": "development",
+      "enabled": true
+    },
+    {
+      "field": "domain",
+      "pattern": "learn.microsoft.com",
+      "category": "development",
+      "enabled": true
+    },
+    {
+      "field": "domain",
+      "pattern": "npmjs.com",
+      "category": "development",
+      "enabled": true
+    },
+    {
+      "field": "domain",
+      "pattern": "bitbucket.org",
+      "category": "development",
+      "enabled": true
+    },
+    {
+      "field": "domain",
+      "pattern": "docs.google.com",
+      "category": "writing",
+      "enabled": true
+    },
+    {
+      "field": "domain",
+      "pattern": "notion.so",
+      "category": "writing",
+      "enabled": true
+    },
+    {
+      "field": "domain",
+      "pattern": "overleaf.com",
+      "category": "writing",
+      "enabled": true
+    },
+    {
+      "field": "domain",
+      "pattern": "medium.com",
+      "category": "writing",
+      "enabled": true
+    },
+    {
+      "field": "domain",
+      "pattern": "mail.google.com",
+      "category": "communication",
+      "enabled": true
+    },
+    {
+      "field": "domain",
+      "pattern": "outlook.live.com",
+      "category": "communication",
+      "enabled": true
+    },
+    {
+      "field": "domain",
+      "pattern": "outlook.office.com",
+      "category": "communication",
+      "enabled": true
+    },
+    {
+      "field": "domain",
+      "pattern": "web.whatsapp.com",
+      "category": "communication",
+      "enabled": true
+    },
+    {
+      "field": "domain",
+      "pattern": "web.telegram.org",
+      "category": "communication",
+      "enabled": true
+    },
+    {
+      "field": "domain",
+      "pattern": "slack.com",
+      "category": "communication",
+      "enabled": true
+    },
+    {
+      "field": "domain",
+      "pattern": "teams.microsoft.com",
+      "category": "communication",
+      "enabled": true
+    },
+    {
+      "field": "domain",
+      "pattern": "meet.google.com",
+      "category": "communication",
+      "enabled": true
+    },
+    {
+      "field": "domain",
+      "pattern": "zoom.us",
+      "category": "communication",
+      "enabled": true
+    },
+    {
+      "field": "domain",
+      "pattern": "figma.com",
+      "category": "design",
+      "enabled": true
+    },
+    {
+      "field": "domain",
+      "pattern": "canva.com",
+      "category": "design",
+      "enabled": true
+    },
+    {
+      "field": "domain",
+      "pattern": "dribbble.com",
+      "category": "design",
+      "enabled": true
+    },
+    {
+      "field": "domain",
+      "pattern": "youtube.com",
+      "category": "media",
+      "enabled": true
+    },
+    {
+      "field": "domain",
+      "pattern": "netflix.com",
+      "category": "media",
+      "enabled": true
+    },
+    {
+      "field": "domain",
+      "pattern": "twitch.tv",
+      "category": "media",
+      "enabled": true
+    },
+    {
+      "field": "domain",
+      "pattern": "spotify.com",
+      "category": "media",
+      "enabled": true
+    },
+    {
+      "field": "domain",
+      "pattern": "primevideo.com",
+      "category": "media",
+      "enabled": true
+    },
+    {
+      "field": "domain",
+      "pattern": "disneyplus.com",
+      "category": "media",
+      "enabled": true
+    },
+    {
+      "field": "domain",
+      "pattern": "facebook.com",
+      "category": "media",
+      "enabled": true
+    },
+    {
+      "field": "domain",
+      "pattern": "instagram.com",
+      "category": "media",
+      "enabled": true
+    },
+    {
+      "field": "domain",
+      "pattern": "x.com",
+      "category": "media",
+      "enabled": true
+    },
+    {
+      "field": "domain",
+      "pattern": "twitter.com",
+      "category": "media",
+      "enabled": true
+    },
+    {
+      "field": "domain",
+      "pattern": "reddit.com",
+      "category": "media",
+      "enabled": true
+    },
+    {
+      "field": "domain",
+      "pattern": "tiktok.com",
+      "category": "media",
+      "enabled": true
+    },
+    {
+      "field": "exe",
+      "pattern": "code.exe",
+      "category": "development",
+      "enabled": true
+    },
+    {
+      "field": "exe",
+      "pattern": "devenv.exe",
+      "category": "development",
+      "enabled": true
+    },
+    {
+      "field": "exe",
+      "pattern": "idea64.exe",
+      "category": "development",
+      "enabled": true
+    },
+    {
+      "field": "exe",
+      "pattern": "pycharm64.exe",
+      "category": "development",
+      "enabled": true
+    },
+    {
+      "field": "exe",
+      "pattern": "webstorm64.exe",
+      "category": "development",
+      "enabled": true
+    },
+    {
+      "field": "exe",
+      "pattern": "rider64.exe",
+      "category": "development",
+      "enabled": true
+    },
+    {
+      "field": "exe",
+      "pattern": "clion64.exe",
+      "category": "development",
+      "enabled": true
+    },
+    {
+      "field": "exe",
+      "pattern": "studio64.exe",
+      "category": "development",
+      "enabled": true
+    },
+    {
+      "field": "exe",
+      "pattern": "datagrip64.exe",
+      "category": "development",
+      "enabled": true
+    },
+    {
+      "field": "exe",
+      "pattern": "sublime_text.exe",
+      "category": "development",
+      "enabled": true
+    },
+    {
+      "field": "exe",
+      "pattern": "notepad++.exe",
+      "category": "development",
+      "enabled": true
+    },
+    {
+      "field": "exe",
+      "pattern": "windowsterminal.exe",
+      "category": "development",
+      "enabled": true
+    },
+    {
+      "field": "exe",
+      "pattern": "cmd.exe",
+      "category": "development",
+      "enabled": true
+    },
+    {
+      "field": "exe",
+      "pattern": "powershell.exe",
+      "category": "development",
+      "enabled": true
+    },
+    {
+      "field": "exe",
+      "pattern": "pwsh.exe",
+      "category": "development",
+      "enabled": true
+    },
+    {
+      "field": "exe",
+      "pattern": "mintty.exe",
+      "category": "development",
+      "enabled": true
+    },
+    {
+      "field": "exe",
+      "pattern": "conhost.exe",
+      "category": "development",
+      "enabled": true
+    },
+    {
+      "field": "exe",
+      "pattern": "wsl.exe",
+      "category": "development",
+      "enabled": true
+    },
+    {
+      "field": "exe",
+      "pattern": "githubdesktop.exe",
+      "category": "development",
+      "enabled": true
+    },
+    {
+      "field": "exe",
+      "pattern": "docker desktop.exe",
+      "category": "development",
+      "enabled": true
+    },
+    {
+      "field": "exe",
+      "pattern": "postman.exe",
+      "category": "development",
+      "enabled": true
+    },
+    {
+      "field": "exe",
+      "pattern": "ssms.exe",
+      "category": "development",
+      "enabled": true
+    },
+    {
+      "field": "exe",
+      "pattern": "zed.exe",
+      "category": "development",
+      "enabled": true
+    },
+    {
+      "field": "exe",
+      "pattern": "nvim.exe",
+      "category": "development",
+      "enabled": true
+    },
+    {
+      "field": "exe",
+      "pattern": "gvim.exe",
+      "category": "development",
+      "enabled": true
+    },
+    {
+      "field": "exe",
+      "pattern": "winword.exe",
+      "category": "writing",
+      "enabled": true
+    },
+    {
+      "field": "exe",
+      "pattern": "excel.exe",
+      "category": "writing",
+      "enabled": true
+    },
+    {
+      "field": "exe",
+      "pattern": "powerpnt.exe",
+      "category": "writing",
+      "enabled": true
+    },
+    {
+      "field": "exe",
+      "pattern": "notepad.exe",
+      "category": "writing",
+      "enabled": true
+    },
+    {
+      "field": "exe",
+      "pattern": "wordpad.exe",
+      "category": "writing",
+      "enabled": true
+    },
+    {
+      "field": "exe",
+      "pattern": "onenote.exe",
+      "category": "writing",
+      "enabled": true
+    },
+    {
+      "field": "exe",
+      "pattern": "obsidian.exe",
+      "category": "writing",
+      "enabled": true
+    },
+    {
+      "field": "exe",
+      "pattern": "typora.exe",
+      "category": "writing",
+      "enabled": true
+    },
+    {
+      "field": "exe",
+      "pattern": "soffice.bin",
+      "category": "writing",
+      "enabled": true
+    },
+    {
+      "field": "exe",
+      "pattern": "acrobat.exe",
+      "category": "writing",
+      "enabled": true
+    },
+    {
+      "field": "exe",
+      "pattern": "acrord32.exe",
+      "category": "writing",
+      "enabled": true
+    },
+    {
+      "field": "exe",
+      "pattern": "notion.exe",
+      "category": "writing",
+      "enabled": true
+    },
+    {
+      "field": "exe",
+      "pattern": "outlook.exe",
+      "category": "communication",
+      "enabled": true
+    },
+    {
+      "field": "exe",
+      "pattern": "olk.exe",
+      "category": "communication",
+      "enabled": true
+    },
+    {
+      "field": "exe",
+      "pattern": "thunderbird.exe",
+      "category": "communication",
+      "enabled": true
+    },
+    {
+      "field": "exe",
+      "pattern": "teams.exe",
+      "category": "communication",
+      "enabled": true
+    },
+    {
+      "field": "exe",
+      "pattern": "ms-teams.exe",
+      "category": "communication",
+      "enabled": true
+    },
+    {
+      "field": "exe",
+      "pattern": "slack.exe",
+      "category": "communication",
+      "enabled": true
+    },
+    {
+      "field": "exe",
+      "pattern": "discord.exe",
+      "category": "communication",
+      "enabled": true
+    },
+    {
+      "field": "exe",
+      "pattern": "zoom.exe",
+      "category": "communication",
+      "enabled": true
+    },
+    {
+      "field": "exe",
+      "pattern": "telegram.exe",
+      "category": "communication",
+      "enabled": true
+    },
+    {
+      "field": "exe",
+      "pattern": "whatsapp.exe",
+      "category": "communication",
+      "enabled": true
+    },
+    {
+      "field": "exe",
+      "pattern": "signal.exe",
+      "category": "communication",
+      "enabled": true
+    },
+    {
+      "field": "exe",
+      "pattern": "skype.exe",
+      "category": "communication",
+      "enabled": true
+    },
+    {
+      "field": "exe",
+      "pattern": "viber.exe",
+      "category": "communication",
+      "enabled": true
+    },
+    {
+      "field": "exe",
+      "pattern": "chrome.exe",
+      "category": "browsing",
+      "enabled": true
+    },
+    {
+      "field": "exe",
+      "pattern": "msedge.exe",
+      "category": "browsing",
+      "enabled": true
+    },
+    {
+      "field": "exe",
+      "pattern": "firefox.exe",
+      "category": "browsing",
+      "enabled": true
+    },
+    {
+      "field": "exe",
+      "pattern": "brave.exe",
+      "category": "browsing",
+      "enabled": true
+    },
+    {
+      "field": "exe",
+      "pattern": "opera.exe",
+      "category": "browsing",
+      "enabled": true
+    },
+    {
+      "field": "exe",
+      "pattern": "vivaldi.exe",
+      "category": "browsing",
+      "enabled": true
+    },
+    {
+      "field": "exe",
+      "pattern": "photoshop.exe",
+      "category": "design",
+      "enabled": true
+    },
+    {
+      "field": "exe",
+      "pattern": "illustrator.exe",
+      "category": "design",
+      "enabled": true
+    },
+    {
+      "field": "exe",
+      "pattern": "indesign.exe",
+      "category": "design",
+      "enabled": true
+    },
+    {
+      "field": "exe",
+      "pattern": "afterfx.exe",
+      "category": "design",
+      "enabled": true
+    },
+    {
+      "field": "exe",
+      "pattern": "adobe premiere pro.exe",
+      "category": "design",
+      "enabled": true
+    },
+    {
+      "field": "exe",
+      "pattern": "figma.exe",
+      "category": "design",
+      "enabled": true
+    },
+    {
+      "field": "exe",
+      "pattern": "blender.exe",
+      "category": "design",
+      "enabled": true
+    },
+    {
+      "field": "exe",
+      "pattern": "gimp*.exe",
+      "category": "design",
+      "enabled": true
+    },
+    {
+      "field": "exe",
+      "pattern": "inkscape.exe",
+      "category": "design",
+      "enabled": true
+    },
+    {
+      "field": "exe",
+      "pattern": "krita.exe",
+      "category": "design",
+      "enabled": true
+    },
+    {
+      "field": "exe",
+      "pattern": "mspaint.exe",
+      "category": "design",
+      "enabled": true
+    },
+    {
+      "field": "exe",
+      "pattern": "resolve.exe",
+      "category": "design",
+      "enabled": true
+    },
+    {
+      "field": "exe",
+      "pattern": "vlc.exe",
+      "category": "media",
+      "enabled": true
+    },
+    {
+      "field": "exe",
+      "pattern": "spotify.exe",
+      "category": "media",
+      "enabled": true
+    },
+    {
+      "field": "exe",
+      "pattern": "wmplayer.exe",
+      "category": "media",
+      "enabled": true
+    },
+    {
+      "field": "exe",
+      "pattern": "mpc-hc64.exe",
+      "category": "media",
+      "enabled": true
+    },
+    {
+      "field": "exe",
+      "pattern": "mpv.exe",
+      "category": "media",
+      "enabled": true
+    },
+    {
+      "field": "exe",
+      "pattern": "itunes.exe",
+      "category": "media",
+      "enabled": true
+    },
+    {
+      "field": "exe",
+      "pattern": "music.ui.exe",
+      "category": "media",
+      "enabled": true
+    },
+    {
+      "field": "exe",
+      "pattern": "video.ui.exe",
+      "category": "media",
+      "enabled": true
+    },
+    {
+      "field": "exe",
+      "pattern": "microsoft.media.player.exe",
+      "category": "media",
+      "enabled": true
+    },
+    {
+      "field": "exe",
+      "pattern": "steam.exe",
+      "category": "games",
+      "enabled": true
+    },
+    {
+      "field": "exe",
+      "pattern": "steamwebhelper.exe",
+      "category": "games",
+      "enabled": true
+    },
+    {
+      "field": "exe",
+      "pattern": "epicgameslauncher.exe",
+      "category": "games",
+      "enabled": true
+    },
+    {
+      "field": "exe",
+      "pattern": "battle.net.exe",
+      "category": "games",
+      "enabled": true
+    },
+    {
+      "field": "exe",
+      "pattern": "riotclientux.exe",
+      "category": "games",
+      "enabled": true
+    },
+    {
+      "field": "exe",
+      "pattern": "leagueclient.exe",
+      "category": "games",
+      "enabled": true
+    },
+    {
+      "field": "exe",
+      "pattern": "minecraft*.exe",
+      "category": "games",
+      "enabled": true
+    },
+    {
+      "field": "exe",
+      "pattern": "gog galaxy.exe",
+      "category": "games",
+      "enabled": true
+    },
+    {
+      "field": "exe",
+      "pattern": "explorer.exe",
+      "category": "utilities",
+      "enabled": true
+    },
+    {
+      "field": "exe",
+      "pattern": "taskmgr.exe",
+      "category": "utilities",
+      "enabled": true
+    },
+    {
+      "field": "exe",
+      "pattern": "7zfm.exe",
+      "category": "utilities",
+      "enabled": true
+    },
+    {
+      "field": "exe",
+      "pattern": "winrar.exe",
+      "category": "utilities",
+      "enabled": true
+    },
+    {
+      "field": "exe",
+      "pattern": "systemsettings.exe",
+      "category": "utilities",
+      "enabled": true
+    },
+    {
+      "field": "exe",
+      "pattern": "calculatorapp.exe",
+      "category": "utilities",
+      "enabled": true
+    },
+    {
+      "field": "exe",
+      "pattern": "snippingtool.exe",
+      "category": "utilities",
+      "enabled": true
+    },
+    {
+      "field": "exe",
+      "pattern": "control.exe",
+      "category": "utilities",
+      "enabled": true
+    },
+    {
+      "field": "exe",
+      "pattern": "mmc.exe",
+      "category": "utilities",
+      "enabled": true
+    },
+    {
+      "field": "exe",
+      "pattern": "regedit.exe",
+      "category": "utilities",
+      "enabled": true
+    },
+    {
+      "field": "exe",
+      "pattern": "searchhost.exe",
+      "category": "utilities",
+      "enabled": true
+    },
+    {
+      "field": "exe",
+      "pattern": "hourforge.exe",
+      "category": "utilities",
+      "enabled": true
+    }
+  ],
+  "projects": [
+    {
+      "id": "atlas",
+      "name": "Atlas",
+      "client": "Northwind",
+      "color": [
+        79,
+        140,
+        255
+      ],
+      "rate": 50.0,
+      "keywords": [
+        "atlas"
+      ],
+      "archived": false
+    },
+    {
+      "id": "malper",
+      "name": "ماڵپەڕی کۆمپانیا",
+      "client": "",
+      "color": [
+        255,
+        146,
+        72
+      ],
+      "rate": 0.0,
+      "keywords": [
+        "ماڵپەڕ"
+      ],
+      "archived": true
+    }
+  ],
+  "browsers": [
+    {
+      "exe": "chrome.exe",
+      "name": "Chrome",
+      "source": "address_bar"
+    },
+    {
+      "exe": "msedge.exe",
+      "name": "Edge",
+      "source": "address_bar"
+    },
+    {
+      "exe": "firefox.exe",
+      "name": "Firefox",
+      "source": "address_bar"
+    },
+    {
+      "exe": "brave.exe",
+      "name": "Brave",
+      "source": "address_bar"
+    },
+    {
+      "exe": "opera.exe",
+      "name": "Opera",
+      "source": "address_bar"
+    },
+    {
+      "exe": "vivaldi.exe",
+      "name": "Vivaldi",
+      "source": "address_bar"
+    }
+  ],
+  "privacy": {
+    "record_titles": true,
+    "record_domains": true,
+    "hide_private_windows": true,
+    "private_apps": [],
+    "redactions": []
+  },
+  "timesheet": {
+    "rounding": "nearest",
+    "step_minutes": 15,
+    "currency": "EUR"
+  }
+}

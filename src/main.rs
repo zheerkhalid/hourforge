@@ -18,11 +18,15 @@ const USAGE: &str = "HourForge: a private, automatic time tracker
   HourForge.exe --background       start tracking in the notification area only
                                    (what the start-with-Windows entry runs)
   HourForge.exe --quit             ask the running HourForge to exit
-  HourForge.exe --export <range> [--format csv|json|html] [--timesheet]
-        [--project <id>] [--out <file>]
+  HourForge.exe --export <range> [--format csv|json|html|ics] [--timesheet]
+        [--invoice] [--project <id>] [--out <file>]
                                    write a report (or a timesheet) and exit.
                                    <range>: today, yesterday, week, last-week, month,
                                    last-month, 2026-11-12 or 2026-11-01..2026-11-12
+                                   --format ics: a calendar file of the worked time
+                                   (no window titles or websites in it)
+                                   --invoice: an invoice as HTML, to print or save as
+                                   PDF; also --invoice-number <text>, --bill-to <name>
   HourForge.exe --demo             show invented data; nothing is tracked or saved
   HourForge.exe --screenshot <png> [--view <name>] [--light]
                                    render a page of the demo to a PNG and exit
@@ -77,7 +81,16 @@ fn main() -> eframe::Result<()> {
             &data_dir,
             &range,
             value("--format").as_deref().unwrap_or("csv"),
-            has("--timesheet"),
+            if has("--invoice") {
+                Sheet::Invoice {
+                    number: value("--invoice-number"),
+                    bill_to: value("--bill-to").unwrap_or_default(),
+                }
+            } else if has("--timesheet") {
+                Sheet::Timesheet
+            } else {
+                Sheet::Report
+            },
             value("--project"),
             value("--out").map(PathBuf::from),
         ) {
@@ -182,18 +195,31 @@ fn main() -> eframe::Result<()> {
     Ok(())
 }
 
+/// What `--export` writes.
+enum Sheet {
+    Report,
+    Timesheet,
+    Invoice {
+        number: Option<String>,
+        bill_to: String,
+    },
+}
+
 /// `--export`: reads the data folder and writes a report. Works while the
 /// tracker is running (it only reads).
 fn export_command(
     dir: &std::path::Path,
     range: &str,
     format: &str,
-    timesheet: bool,
+    sheet: Sheet,
     project: Option<String>,
     out: Option<PathBuf>,
 ) -> Result<(), String> {
     let format = Format::parse(format)
-        .ok_or_else(|| format!("unknown format \"{format}\" (csv, json, html)"))?;
+        .ok_or_else(|| format!("unknown format \"{format}\" (csv, json, html, ics)"))?;
+    if format == Format::Ics && !matches!(sheet, Sheet::Report) {
+        return Err("a calendar file (ics) is only made from the activity report".into());
+    }
     if !dir.is_dir() {
         return Err(format!("no data folder at {}", dir.display()));
     }
@@ -212,16 +238,31 @@ fn export_command(
         to,
         label: &label,
     };
-    let text = if timesheet {
-        if let Some(id) = &project {
-            if settings.project(id).is_none() {
-                return Err(format!("no project with the id \"{id}\""));
-            }
+    if let (Some(id), false) = (&project, matches!(sheet, Sheet::Report)) {
+        if settings.project(id).is_none() {
+            return Err(format!("no project with the id \"{id}\""));
         }
-        let sheet = export::timesheet(&input, project.as_deref());
-        export::timesheet_text(&sheet, &input, format)
-    } else {
-        export::report(&input, format)
+    }
+    let text = match sheet {
+        Sheet::Report => export::report(&input, format),
+        Sheet::Timesheet => {
+            let sheet = export::timesheet(&input, project.as_deref());
+            export::timesheet_text(&sheet, &input, format)
+        }
+        Sheet::Invoice { number, bill_to } => {
+            let issued = tz.day_of(timeutil::now());
+            let number = number.unwrap_or_else(|| export::default_invoice_number(issued));
+            let sheet = export::timesheet(&input, project.as_deref());
+            export::invoice_html(
+                &sheet,
+                &input,
+                &export::InvoiceMeta {
+                    number: &number,
+                    issued,
+                    bill_to: &bill_to,
+                },
+            )
+        }
     };
     match out {
         Some(path) => std::fs::write(&path, text).map_err(|e| format!("{}: {e}", path.display())),

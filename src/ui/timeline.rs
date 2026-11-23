@@ -28,6 +28,10 @@ pub struct TimelineState {
     /// Scroll to and highlight this block once.
     pub focus: Option<BlockId>,
     pub highlight: Option<BlockId>,
+    /// What is typed in the search box; narrows the list.
+    pub search: String,
+    /// Put the keyboard in the search box on the next frame (Ctrl+F).
+    pub focus_search: bool,
     cache_key: (Day, u64),
     blocks: Vec<Block>,
     /// Category index per block, by the rules as they are now.
@@ -43,6 +47,8 @@ impl Default for TimelineState {
             checked: HashSet::new(),
             focus: None,
             highlight: None,
+            search: String::new(),
+            focus_search: false,
             cache_key: (i32::MIN, u64::MAX),
             blocks: Vec::new(),
             classes: Vec::new(),
@@ -138,27 +144,88 @@ impl App {
                     self.timeline.filter = f;
                 }
             }
+            // Search, on the right.
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if !self.timeline.search.is_empty()
+                    && widgets::icon_button(ui, Icon::CLOSE, "Clear the search").clicked()
+                {
+                    self.timeline.search.clear();
+                }
+                let resp = widgets::text_edit(
+                    ui,
+                    &mut self.timeline.search,
+                    "Search this day: title, program, note, #tag",
+                    290.0,
+                )
+                .on_hover_text("Ctrl+F. Every word must match; #word looks at tags only.");
+                if std::mem::take(&mut self.timeline.focus_search) {
+                    resp.request_focus();
+                }
+            });
         });
         ui.add_space(2.0);
 
         let filter = self.timeline.filter;
+        let query = self.timeline.search.trim().to_string();
         let rows: Vec<usize> = self
             .timeline
             .blocks
             .iter()
             .enumerate()
             .filter(|(_, b)| filter_matches(filter, b))
+            .filter(|(i, b)| {
+                if query.is_empty() {
+                    return true;
+                }
+                let (cat, project) = self.timeline.classes[*i];
+                let category = self.classifier.categories.get(cat);
+                let project = project.and_then(|p| self.classifier.projects.get(p));
+                edit::matches_search(
+                    b,
+                    &query,
+                    category.map(|c| c.name.as_str()).unwrap_or(""),
+                    project.map(|p| p.name.as_str()).unwrap_or(""),
+                )
+            })
             .map(|(i, _)| i)
             .collect();
         if rows.is_empty() {
-            widgets::empty_state(
-                ui,
-                Icon::CLOCK,
-                p.accent,
-                "Nothing recorded",
-                "No time was recorded on this day, or nothing matches the filter. Use Add time for work done away from the PC.",
-            );
+            if query.is_empty() {
+                widgets::empty_state(
+                    ui,
+                    Icon::CLOCK,
+                    p.accent,
+                    "Nothing recorded",
+                    "No time was recorded on this day, or nothing matches the filter. Use Add time for work done away from the PC.",
+                );
+            } else {
+                widgets::empty_state(
+                    ui,
+                    Icon::SEARCH,
+                    p.accent,
+                    "Nothing found",
+                    "No block of this day matches the search. It looks at titles, programs, websites, notes, tags, categories and projects.",
+                );
+            }
             return;
+        }
+        if !query.is_empty() {
+            let secs: i64 = rows
+                .iter()
+                .map(|&i| &self.timeline.blocks[i])
+                .filter(|b| b.is_work())
+                .map(|b| b.secs())
+                .sum();
+            ui.label(
+                RichText::new(format!(
+                    "{} block{} found, {} of worked time",
+                    rows.len(),
+                    if rows.len() == 1 { "" } else { "s" },
+                    timeutil::fmt_dur(secs)
+                ))
+                .size(12.5)
+                .color(p.muted),
+            );
         }
 
         self.timeline_selection_bar(ui);
@@ -213,6 +280,7 @@ impl App {
         let mut merge = false;
         let mut delete = false;
         let mut clear = false;
+        let mut tag = false;
         let mut project: Option<Option<String>> = None;
         let mut category: Option<Option<String>> = None;
         egui::Frame::new()
@@ -244,7 +312,7 @@ impl App {
                         }
                         ui.separator();
                         for pr in self.settings.projects.iter().filter(|x| !x.archived) {
-                            if ui.button(&pr.name).clicked() {
+                            if widgets::menu_item(ui, &pr.name).clicked() {
                                 project = Some(Some(pr.id.clone()));
                                 ui.close_menu();
                             }
@@ -258,12 +326,18 @@ impl App {
                         }
                         ui.separator();
                         for c in &self.settings.categories {
-                            if ui.button(&c.name).clicked() {
+                            if widgets::menu_item(ui, &c.name).clicked() {
                                 category = Some(Some(c.id.clone()));
                                 ui.close_menu();
                             }
                         }
                     });
+                    if widgets::ghost_button(ui, "# Tags")
+                        .on_hover_text("Add tags to the selected blocks, or replace theirs")
+                        .clicked()
+                    {
+                        tag = true;
+                    }
                     if widgets::ghost_button(ui, &Icon::DELETE.with("Delete")).clicked() {
                         delete = true;
                     }
@@ -282,6 +356,9 @@ impl App {
             .collect();
         if clear {
             self.timeline.checked.clear();
+        }
+        if tag {
+            self.dialog = Some(Dialog::tags(selected.iter().map(|b| b.id).collect()));
         }
         if merge {
             match edit::merge(&selected) {

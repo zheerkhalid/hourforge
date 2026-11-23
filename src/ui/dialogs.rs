@@ -56,6 +56,7 @@ pub struct SplitDlg {
 pub enum ExportKind {
     Report,
     Timesheet,
+    Invoice,
 }
 
 pub struct ExportDlg {
@@ -64,7 +65,19 @@ pub struct ExportDlg {
     pub format: Format,
     pub kind: ExportKind,
     pub project: Option<String>,
+    /// Empty: `INV-` and today's date.
+    invoice_no: String,
+    /// Empty: the client of the projects, when they share one.
+    bill_to: String,
     error: Option<String>,
+}
+
+/// Tags for several blocks at once.
+pub struct TagsDlg {
+    ids: Vec<BlockId>,
+    tags: String,
+    /// Replace the tags the blocks have, instead of adding to them.
+    replace: bool,
 }
 
 pub struct RuleDlg {
@@ -90,6 +103,7 @@ pub struct ProjectDlg {
     color: [u8; 3],
     rate: String,
     keywords: String,
+    billable: bool,
     error: Option<String>,
 }
 
@@ -117,6 +131,9 @@ pub enum Dialog {
     Category(Box<CategoryDlg>),
     Project(Box<ProjectDlg>),
     Goal(Box<GoalDlg>),
+    Tags(Box<TagsDlg>),
+    /// The list of keyboard shortcuts (F1).
+    Shortcuts,
 }
 
 impl Dialog {
@@ -194,7 +211,17 @@ impl Dialog {
             },
             kind,
             project,
+            invoice_no: String::new(),
+            bill_to: String::new(),
             error: None,
+        }))
+    }
+
+    pub fn tags(ids: Vec<BlockId>) -> Dialog {
+        Dialog::Tags(Box::new(TagsDlg {
+            ids,
+            tags: String::new(),
+            replace: false,
         }))
     }
 
@@ -239,6 +266,7 @@ impl Dialog {
                     String::new()
                 },
                 keywords: p.keywords.join(", "),
+                billable: !p.non_billable,
                 error: None,
             },
             None => ProjectDlg {
@@ -248,6 +276,7 @@ impl Dialog {
                 color: PALETTE[(settings.projects.len() * 5 + 9) % PALETTE.len()],
                 rate: String::new(),
                 keywords: String::new(),
+                billable: true,
                 error: None,
             },
         }))
@@ -283,7 +312,18 @@ fn title(ui: &mut Ui, text: &str) {
 
 fn para(ui: &mut Ui, text: &str) {
     let p = pal(ui);
+    if super::bidi::needs_native(text) {
+        // A right-to-left window title: one line, drawn by Windows.
+        super::bidi::label(ui, text, 14.0, false, p.muted);
+        return;
+    }
     ui.add(egui::Label::new(RichText::new(text).color(p.muted)).wrap());
+}
+
+/// Enter confirms a form, as its main button does. Deletions are never
+/// confirmed this way.
+fn enter_pressed(ui: &Ui) -> bool {
+    ui.input(|i| i.key_pressed(egui::Key::Enter))
 }
 
 fn error_line(ui: &mut Ui, error: &Option<String>) {
@@ -308,13 +348,7 @@ fn row(ui: &mut Ui, label: &str, add: impl FnOnce(&mut Ui)) {
 }
 
 fn text_field(ui: &mut Ui, value: &mut String, hint: &str, width: f32) -> egui::Response {
-    let p = pal(ui);
-    ui.add(
-        egui::TextEdit::singleline(value)
-            .hint_text(RichText::new(hint).color(p.faint))
-            .desired_width(width)
-            .margin(egui::Margin::symmetric(8, 6)),
-    )
+    widgets::text_edit(ui, value, hint, width)
 }
 
 /// A row of colour swatches to pick from.
@@ -340,15 +374,19 @@ fn category_combo(ui: &mut Ui, id: &str, settings: &Settings, value: &mut Option
         None => "By the rules".to_string(),
         Some(id) => settings.category_name(id).to_string(),
     };
-    egui::ComboBox::from_id_salt(id)
-        .selected_text(shown)
+    let combo = egui::ComboBox::from_id_salt(id)
+        .selected_text(widgets::combo_text(&shown))
         .width(240.0)
         .show_ui(ui, |ui| {
             ui.selectable_value(value, None, "By the rules");
             for c in &settings.categories {
-                ui.selectable_value(value, Some(c.id.clone()), &c.name);
+                let selected = value.as_deref() == Some(c.id.as_str());
+                if widgets::option_item(ui, selected, &c.name) {
+                    *value = Some(c.id.clone());
+                }
             }
         });
+    widgets::combo_overlay(ui, &combo.response, &shown);
 }
 
 fn project_combo(
@@ -363,16 +401,20 @@ fn project_combo(
         Some("") => "No project".to_string(),
         Some(id) => settings.project_name(id).to_string(),
     };
-    egui::ComboBox::from_id_salt(id)
-        .selected_text(shown)
+    let combo = egui::ComboBox::from_id_salt(id)
+        .selected_text(widgets::combo_text(&shown))
         .width(240.0)
         .show_ui(ui, |ui| {
             ui.selectable_value(value, None, rules_label);
             ui.selectable_value(value, Some(String::new()), "No project");
             for p in settings.projects.iter().filter(|p| !p.archived) {
-                ui.selectable_value(value, Some(p.id.clone()), &p.name);
+                let selected = value.as_deref() == Some(p.id.as_str());
+                if widgets::option_item(ui, selected, &p.name) {
+                    *value = Some(p.id.clone());
+                }
             }
         });
+    widgets::combo_overlay(ui, &combo.response, &shown);
 }
 
 impl App {
@@ -417,6 +459,8 @@ impl App {
                 Dialog::Category(d) => close = self.category_dialog(ui, d),
                 Dialog::Project(d) => close = self.project_dialog(ui, d),
                 Dialog::Goal(d) => close = self.goal_dialog(ui, d),
+                Dialog::Tags(d) => close = self.tags_dialog(ui, d),
+                Dialog::Shortcuts => close = shortcuts_dialog(ui),
             });
         if modal.should_close() {
             close = true;
@@ -718,7 +762,7 @@ impl App {
         });
         error_line(ui, &d.error);
         ui.add_space(10.0);
-        let mut save = false;
+        let mut save = enter_pressed(ui);
         let mut cancel = false;
         widgets::button_row(ui, |ui| {
             if widgets::primary_button(ui, if d.is_new { "Add" } else { "Save" }, true).clicked() {
@@ -754,6 +798,10 @@ impl App {
         };
         let start = self.tz.at(day, sh, sm);
         let mut end = self.tz.at(day, eh, em);
+        // "22:30 to 01:15" ends after midnight.
+        if end <= start && (eh, em) != (sh, sm) {
+            end = self.tz.at(day + 1, eh, em);
+        }
         // Keep the seconds of an untouched end so that nothing is lost.
         if !d.is_new && timeutil::fmt_hm(d.block.end, &self.tz) == d.end.trim() {
             end = d.block.end;
@@ -764,7 +812,7 @@ impl App {
             start
         };
         if end <= start {
-            d.error = Some("The end must be after the start (on the same day).".into());
+            d.error = Some("The end must be after the start.".into());
             return false;
         }
         if end > self.now() + 60 {
@@ -820,7 +868,7 @@ impl App {
         });
         error_line(ui, &d.error);
         ui.add_space(10.0);
-        let mut go = false;
+        let mut go = enter_pressed(ui);
         let mut cancel = false;
         widgets::button_row(ui, |ui| {
             if widgets::primary_button(ui, &Icon::CUT.with("Split"), true).clicked() {
@@ -872,13 +920,16 @@ impl App {
         );
         ui.add_space(6.0);
         row(ui, "What", |ui| {
-            let current = usize::from(d.kind == ExportKind::Timesheet);
-            if let Some(i) = widgets::segmented(ui, &["Activity report", "Timesheet"], current) {
-                d.kind = if i == 1 {
-                    ExportKind::Timesheet
-                } else {
-                    ExportKind::Report
-                };
+            let kinds = [
+                ExportKind::Report,
+                ExportKind::Timesheet,
+                ExportKind::Invoice,
+            ];
+            let current = kinds.iter().position(|k| *k == d.kind).unwrap_or(0);
+            if let Some(i) =
+                widgets::segmented(ui, &["Activity report", "Timesheet", "Invoice"], current)
+            {
+                d.kind = kinds[i];
             }
         });
         row(ui, "From / to", |ui| {
@@ -886,33 +937,95 @@ impl App {
             ui.label(RichText::new("to").color(p.muted));
             text_field(ui, &mut d.to, "YYYY-MM-DD", 110.0);
         });
-        row(ui, "Format", |ui| {
-            let formats = [Format::Html, Format::Csv, Format::Json];
-            let current = formats.iter().position(|f| *f == d.format).unwrap_or(0);
-            if let Some(i) = widgets::segmented(ui, &["HTML", "CSV", "JSON"], current) {
-                d.format = formats[i];
-            }
-        });
-        if d.kind == ExportKind::Timesheet {
+        // What each kind can be written as.
+        let formats: &[Format] = match d.kind {
+            ExportKind::Report => &[Format::Html, Format::Csv, Format::Json, Format::Ics],
+            ExportKind::Timesheet => &[Format::Html, Format::Csv, Format::Json],
+            ExportKind::Invoice => &[Format::Html],
+        };
+        if !formats.contains(&d.format) {
+            d.format = Format::Html;
+        }
+        if formats.len() > 1 {
+            row(ui, "Format", |ui| {
+                let names: Vec<&str> = formats
+                    .iter()
+                    .map(|f| match f {
+                        Format::Html => "HTML",
+                        Format::Csv => "CSV",
+                        Format::Json => "JSON",
+                        Format::Ics => "Calendar",
+                    })
+                    .collect();
+                let current = formats.iter().position(|f| *f == d.format).unwrap_or(0);
+                if let Some(i) = widgets::segmented(ui, &names, current) {
+                    d.format = formats[i];
+                }
+            });
+        }
+        if d.format == Format::Ics {
+            ui.label(
+                RichText::new(
+                    "An .ics file for Outlook, Google Calendar and others: one event per sitting, named after its project or category. Window titles and websites are left out.",
+                )
+                .size(12.0)
+                .color(p.faint),
+            );
+        }
+        let default_no = export::default_invoice_number(self.today());
+        if d.kind == ExportKind::Invoice {
+            row(ui, "Invoice no.", |ui| {
+                text_field(ui, &mut d.invoice_no, &default_no, 160.0);
+            });
+            row(ui, "From", |ui| {
+                text_field(
+                    ui,
+                    &mut self.settings.timesheet.business,
+                    "Your name or business (remembered)",
+                    330.0,
+                );
+            });
+            row(ui, "Bill to", |ui| {
+                text_field(ui, &mut d.bill_to, "The client of the projects", 330.0);
+            });
+            row(ui, "Footer", |ui| {
+                text_field(
+                    ui,
+                    &mut self.settings.timesheet.invoice_note,
+                    "Payment terms, bank details (remembered)",
+                    330.0,
+                );
+            });
+        }
+        if d.kind != ExportKind::Report {
             row(ui, "Project", |ui| {
                 let shown = match d.project.as_deref() {
                     None => "All projects".to_string(),
                     Some(id) => self.settings.project_name(id).to_string(),
                 };
-                egui::ComboBox::from_id_salt("export-project")
-                    .selected_text(shown)
+                let combo = egui::ComboBox::from_id_salt("export-project")
+                    .selected_text(widgets::combo_text(&shown))
                     .width(240.0)
                     .show_ui(ui, |ui| {
                         ui.selectable_value(&mut d.project, None, "All projects");
                         for pr in &self.settings.projects {
-                            ui.selectable_value(&mut d.project, Some(pr.id.clone()), &pr.name);
+                            let selected = d.project.as_deref() == Some(pr.id.as_str());
+                            if widgets::option_item(ui, selected, &pr.name) {
+                                d.project = Some(pr.id.clone());
+                            }
                         }
                     });
+                widgets::combo_overlay(ui, &combo.response, &shown);
             });
             let t = &self.settings.timesheet;
             ui.label(
                 RichText::new(format!(
-                    "Rounding: {}{}. Change it on the Projects page.",
+                    "{}Rounding: {}{}. Change it on the Projects page.",
+                    if d.kind == ExportKind::Invoice {
+                        "Only billable projects with an hourly rate are invoiced. "
+                    } else {
+                        ""
+                    },
                     t.rounding.name().to_lowercase(),
                     if t.rounding == crate::model::Rounding::None {
                         String::new()
@@ -926,7 +1039,7 @@ impl App {
         }
         error_line(ui, &d.error);
         ui.add_space(10.0);
-        let mut go = false;
+        let mut go = enter_pressed(ui);
         let mut cancel = false;
         widgets::button_row(ui, |ui| {
             if widgets::primary_button(ui, &Icon::EXPORT.with("Save as…"), true).clicked() {
@@ -968,6 +1081,11 @@ impl App {
             to: end,
             label: &label,
         };
+        let invoice_no = if d.invoice_no.trim().is_empty() {
+            default_no
+        } else {
+            d.invoice_no.trim().to_string()
+        };
         let (text, kind) = match d.kind {
             ExportKind::Report => (export::report(&input, d.format), "report"),
             ExportKind::Timesheet => {
@@ -977,12 +1095,32 @@ impl App {
                     "timesheet",
                 )
             }
+            ExportKind::Invoice => {
+                let sheet = export::timesheet(&input, d.project.as_deref());
+                if export::invoice_lines(&sheet).is_empty() {
+                    d.error = Some(
+                        "There is no billable project time with an hourly rate in this range."
+                            .into(),
+                    );
+                    return false;
+                }
+                let meta = export::InvoiceMeta {
+                    number: &invoice_no,
+                    issued: self.today(),
+                    bill_to: &d.bill_to,
+                };
+                (export::invoice_html(&sheet, &input, &meta), "invoice")
+            }
         };
-        let name = export::default_file_name(
-            kind,
-            &format!("{}_{}", d.from.trim(), d.to.trim()),
-            d.format,
-        );
+        let name = if d.kind == ExportKind::Invoice {
+            export::default_file_name(kind, &invoice_no, d.format)
+        } else {
+            export::default_file_name(
+                kind,
+                &format!("{}_{}", d.from.trim(), d.to.trim()),
+                d.format,
+            )
+        };
         let Some(path) = rfd::FileDialog::new()
             .set_file_name(name)
             .add_filter(d.format.extension().to_uppercase(), &[d.format.extension()])
@@ -1027,18 +1165,22 @@ impl App {
             text_field(ui, &mut d.pattern, hint, 330.0);
         });
         row(ui, "it counts as", |ui| {
-            egui::ComboBox::from_id_salt("rule-category")
-                .selected_text(self.settings.category_name(&d.category).to_string())
+            let shown = self.settings.category_name(&d.category).to_string();
+            let combo = egui::ComboBox::from_id_salt("rule-category")
+                .selected_text(widgets::combo_text(&shown))
                 .width(240.0)
                 .show_ui(ui, |ui| {
                     for c in &self.settings.categories {
-                        ui.selectable_value(&mut d.category, c.id.clone(), &c.name);
+                        if widgets::option_item(ui, d.category == c.id, &c.name) {
+                            d.category = c.id.clone();
+                        }
                     }
                 });
+            widgets::combo_overlay(ui, &combo.response, &shown);
         });
         error_line(ui, &d.error);
         ui.add_space(10.0);
-        let mut go = false;
+        let mut go = enter_pressed(ui);
         let mut cancel = false;
         widgets::button_row(ui, |ui| {
             if widgets::primary_button(ui, "Add rule", true).clicked() {
@@ -1103,7 +1245,7 @@ impl App {
         });
         error_line(ui, &d.error);
         ui.add_space(10.0);
-        let mut go = false;
+        let mut go = enter_pressed(ui);
         let mut cancel = false;
         widgets::button_row(ui, |ui| {
             if widgets::primary_button(ui, "Save", true).clicked() {
@@ -1197,6 +1339,20 @@ impl App {
                 .color(p.faint),
             );
         });
+        row(ui, "Billable", |ui| {
+            if widgets::toggle(ui, d.billable, true).clicked() {
+                d.billable = !d.billable;
+            }
+            ui.label(
+                RichText::new(if d.billable {
+                    "Charged at the hourly rate on timesheets and invoices"
+                } else {
+                    "Tracked and reported, never charged"
+                })
+                .size(12.0)
+                .color(p.faint),
+            );
+        });
         row(ui, "Keywords", |ui| {
             text_field(ui, &mut d.keywords, "Separated by commas", 330.0);
         });
@@ -1207,7 +1363,7 @@ impl App {
         );
         error_line(ui, &d.error);
         ui.add_space(10.0);
-        let mut go = false;
+        let mut go = enter_pressed(ui);
         let mut cancel = false;
         widgets::button_row(ui, |ui| {
             if widgets::primary_button(ui, "Save", true).clicked() {
@@ -1253,6 +1409,7 @@ impl App {
                     pr.color = d.color;
                     pr.rate = rate;
                     pr.keywords = keywords;
+                    pr.non_billable = !d.billable;
                 }
             }
             None => {
@@ -1271,10 +1428,81 @@ impl App {
                     rate,
                     keywords,
                     archived: false,
+                    non_billable: !d.billable,
                 });
             }
         }
         true
+    }
+
+    fn tags_dialog(&mut self, ui: &mut Ui, d: &mut TagsDlg) -> bool {
+        let p = pal(ui);
+        ui.set_width(460.0);
+        let n = d.ids.len();
+        title(
+            ui,
+            &format!("Tags for {n} block{}", if n == 1 { "" } else { "s" }),
+        );
+        para(
+            ui,
+            "Tags are free words such as client, urgent or deep work. Find them again with #tag in the timeline's search; exports list the time per tag.",
+        );
+        ui.add_space(6.0);
+        row(ui, "Tags", |ui| {
+            text_field(ui, &mut d.tags, "Separated by commas", 320.0).request_focus();
+        });
+        row(ui, "Replace", |ui| {
+            if widgets::toggle(ui, d.replace, true).clicked() {
+                d.replace = !d.replace;
+            }
+            ui.label(
+                RichText::new(if d.replace {
+                    "The blocks get exactly these tags (none: all tags are removed)"
+                } else {
+                    "Added to the tags the blocks already have"
+                })
+                .size(12.0)
+                .color(p.faint),
+            );
+        });
+        ui.add_space(10.0);
+        let mut go = enter_pressed(ui);
+        let mut cancel = false;
+        let tags = edit::parse_tags(&d.tags);
+        widgets::button_row(ui, |ui| {
+            if widgets::primary_button(ui, "Save", d.replace || !tags.is_empty()).clicked() {
+                go = true;
+            }
+            if widgets::ghost_button(ui, "Cancel").clicked() {
+                cancel = true;
+            }
+        });
+        if cancel {
+            return true;
+        }
+        if !go || (tags.is_empty() && !d.replace) {
+            return false;
+        }
+        let replace = d.replace;
+        let ids = d.ids.clone();
+        let done = self.store_write(|store| {
+            for id in &ids {
+                if let Some(mut block) = store.get(*id) {
+                    block.tags = if replace {
+                        tags.clone()
+                    } else {
+                        edit::add_tags(&block.tags, &tags)
+                    };
+                    store.put(&block)?;
+                }
+            }
+            Ok(())
+        });
+        if done.is_some() {
+            self.toast("Tags updated", false);
+            return true;
+        }
+        false
     }
 
     fn goal_dialog(&mut self, ui: &mut Ui, d: &mut GoalDlg) -> bool {
@@ -1353,7 +1581,7 @@ impl App {
             );
         });
         ui.add_space(10.0);
-        let mut go = false;
+        let mut go = enter_pressed(ui);
         let mut cancel = false;
         let total = d.hours * 60 + d.minutes;
         widgets::button_row(ui, |ui| {
@@ -1367,7 +1595,7 @@ impl App {
         if cancel {
             return true;
         }
-        if !go {
+        if !go || total == 0 {
             return false;
         }
         let goal = Goal {
@@ -1382,4 +1610,28 @@ impl App {
         }
         true
     }
+}
+
+/// The list of keyboard shortcuts. Returns true when it should close.
+fn shortcuts_dialog(ui: &mut Ui) -> bool {
+    let p = pal(ui);
+    ui.set_width(520.0);
+    title(ui, "Keyboard shortcuts");
+    ui.add_space(4.0);
+    for (keys, what) in super::app::SHORTCUTS {
+        let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 28.0), Sense::hover());
+        let left =
+            egui::Rect::from_min_max(rect.min, egui::pos2(rect.left() + 170.0, rect.bottom()));
+        let right = egui::Rect::from_min_max(egui::pos2(rect.left() + 180.0, rect.top()), rect.max);
+        widgets::text_in(ui, left, keys, semibold(13.5), p.accent);
+        widgets::text_in(ui, right, what, super::theme::regular(13.5), p.text);
+    }
+    ui.add_space(10.0);
+    let mut close = false;
+    widgets::button_row(ui, |ui| {
+        if widgets::primary_button(ui, "Close", true).clicked() {
+            close = true;
+        }
+    });
+    close
 }

@@ -191,6 +191,19 @@ impl Classifier {
         self.other
     }
 
+    /// Whether an enabled program rule covers `exe` (even one for "Other").
+    pub fn has_program_rule(&self, exe: &str) -> bool {
+        let name = normalize_exe(exe);
+        self.exe_exact.contains_key(&name)
+            || self.exe_glob.iter().any(|(g, _)| glob_matches(g, &name))
+    }
+
+    /// Whether an enabled website rule covers `domain`.
+    pub fn has_site_rule(&self, domain: &str) -> bool {
+        let d = normalize_domain(domain);
+        self.domain.iter().any(|(rule, _)| domain_matches(&d, rule))
+    }
+
     pub fn category_index(&self, id: &str) -> Option<usize> {
         self.cat_index.get(id).copied()
     }

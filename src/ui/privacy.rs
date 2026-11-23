@@ -38,13 +38,7 @@ impl Default for PrivacyState {
 }
 
 fn field(ui: &mut Ui, value: &mut String, hint: &str, width: f32) -> egui::Response {
-    let p = pal(ui);
-    ui.add(
-        egui::TextEdit::singleline(value)
-            .hint_text(RichText::new(hint).color(p.faint))
-            .desired_width(width)
-            .margin(egui::Margin::symmetric(8, 6)),
-    )
+    widgets::text_edit(ui, value, hint, width)
 }
 
 impl App {

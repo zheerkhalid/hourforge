@@ -13,7 +13,7 @@ use crate::sessions::{Config, Event, Out, Sample, SessionBuilder};
 use crate::settings::{ReturnPrompt, Settings};
 use crate::sys::wide;
 use crate::timeutil::{self, Tz};
-use crate::{domain, spans, uia, winfo};
+use crate::{digest, domain, spans, uia, winfo};
 use std::cell::RefCell;
 use std::collections::HashSet;
 use std::ffi::c_void;
@@ -154,6 +154,9 @@ pub fn parse_hotkey(text: &str) -> Option<Hotkey> {
 struct Persisted {
     #[serde(default)]
     paused_until: Option<i64>,
+    /// First day of the week in which the weekly summary was last shown.
+    #[serde(default)]
+    weekly_shown: Option<i32>,
 }
 
 struct State {
@@ -194,6 +197,10 @@ struct State {
     active_since: Option<i64>,
     break_reminded: bool,
     retention_day: i32,
+    /// First day of the week in which the weekly summary was last shown.
+    weekly_shown: Option<i32>,
+    /// The page a click on the newest notification opens.
+    notify_page: Option<String>,
     apps_dirty: bool,
     indicator_text: String,
     indicator_color: u32,
@@ -553,6 +560,7 @@ impl State {
     fn persist(&self) {
         let data = Persisted {
             paused_until: self.paused_until,
+            weekly_shown: self.weekly_shown,
         };
         if let Ok(json) = serde_json::to_vec(&data) {
             let _ = std::fs::write(self.shared.dir.join("state.json"), json);
@@ -743,6 +751,7 @@ impl State {
         self.today_secs = spans::worked(&flat);
         self.check_goals(day, &flat);
         self.check_break(now);
+        self.check_weekly(day);
         if self.retention_day != day {
             self.retention_day = day;
             self.alerted.retain(|(d, _)| *d == day);
@@ -805,6 +814,30 @@ impl State {
                     &format!("{amount} done today. Nicely done."),
                 );
             }
+        }
+    }
+
+    /// Once a week, while the user is at the keyboard: last week in a
+    /// notification. A click on it opens that week in the reports.
+    fn check_weekly(&mut self, day: i32) {
+        if !self.settings.weekly_summary || !self.tray || self.state() != TrackState::Active {
+            return;
+        }
+        let monday_first = self.settings.week_starts_monday;
+        let Some(from) = digest::due(day, monday_first, self.weekly_shown) else {
+            return;
+        };
+        let (start, end) = (self.tz.day_start(from - 7), self.tz.day_start(from + 7));
+        let blocks = match self.shared.store.lock() {
+            Ok(mut store) => store.range(start, end),
+            Err(_) => return,
+        };
+        let week = digest::week(&blocks, &self.classifier, &self.tz, from);
+        self.weekly_shown = Some(from + 7);
+        self.persist();
+        if let Some((title, text)) = digest::week_notification(&week) {
+            self.notify(&title, &text);
+            self.notify_page = Some("reports-last-week".to_string());
         }
     }
 
@@ -891,6 +924,9 @@ impl State {
         if !self.tray {
             return;
         }
+        // A click on a notification opens the window; only the weekly summary
+        // (which sets this after the call) asks for a particular page.
+        self.notify_page = None;
         let mut data = self.tray_data();
         data.uFlags |= NIF_INFO;
         data.dwInfoFlags = NIIF_INFO;
@@ -1204,7 +1240,12 @@ unsafe extern "system" fn wnd_proc(
                 }
                 NIN_BALLOONUSERCLICK => {
                     with_state(|s| {
-                        let page = (!s.returned.is_empty()).then_some("away");
+                        let summary = s.notify_page.take();
+                        let page = if !s.returned.is_empty() {
+                            Some("away")
+                        } else {
+                            summary.as_deref()
+                        };
                         s.request_open(page)
                     });
                 }
@@ -1492,6 +1533,8 @@ fn thread_main(
             active_since: None,
             break_reminded: false,
             retention_day: i32::MIN,
+            weekly_shown: persisted.weekly_shown,
+            notify_page: None,
             apps_dirty: false,
             indicator_text: String::new(),
             indicator_color: 0,
@@ -1573,6 +1616,23 @@ mod tests {
         ] {
             assert!(parse_hotkey(bad).is_none(), "{bad}");
         }
+    }
+
+    /// The state file of 1.0.0 has no `weekly_shown`; an empty file is fine too.
+    #[test]
+    fn state_file_of_1_0_0_is_read() {
+        let old: Persisted = serde_json::from_slice(br#"{"paused_until":1794300000}"#).unwrap();
+        assert_eq!(old.paused_until, Some(1_794_300_000));
+        assert_eq!(old.weekly_shown, None);
+        let empty: Persisted = serde_json::from_slice(b"{}").unwrap();
+        assert_eq!((empty.paused_until, empty.weekly_shown), (None, None));
+        let new = Persisted {
+            paused_until: None,
+            weekly_shown: Some(20_766),
+        };
+        let json = serde_json::to_vec(&new).unwrap();
+        let back: Persisted = serde_json::from_slice(&json).unwrap();
+        assert_eq!(back.weekly_shown, Some(20_766));
     }
 
     #[test]

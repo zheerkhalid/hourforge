@@ -1,5 +1,6 @@
 //! Small reusable pieces of UI.
 
+use super::bidi;
 use super::theme::{pal, regular, semibold, Icon};
 use eframe::egui::{
     self, pos2, text::LayoutJob, text::TextWrapping, vec2, Align2, Color32, CornerRadius, FontId,
@@ -89,6 +90,16 @@ pub fn icon_button(ui: &mut Ui, icon: Icon, tooltip: &str) -> Response {
 
 /// A small pill label.
 pub fn badge(ui: &mut Ui, text: &str, color: Color32) -> Response {
+    if bidi::needs_native(text) {
+        if let Some(size) = bidi::measure(ui, text, 11.5, true) {
+            let (rect, resp) = ui.allocate_exact_size(vec2(size.x + 14.0, 20.0), Sense::hover());
+            ui.painter()
+                .rect_filled(rect, CornerRadius::same(10), color.gamma_multiply(0.16));
+            let inner = rect.shrink2(vec2(7.0, 0.0));
+            bidi::paint(ui, inner, text, 11.5, true, color, false);
+            return resp;
+        }
+    }
     let font = semibold(11.5);
     let galley = ui.painter().layout_no_wrap(text.to_string(), font, color);
     let size = vec2(galley.size().x + 14.0, 20.0);
@@ -278,6 +289,13 @@ pub fn elided(
 
 /// Paints one elided line, vertically centred in `rect`. Returns whether it was cut.
 pub fn text_in(ui: &Ui, rect: Rect, text: &str, font: FontId, color: Color32) -> bool {
+    // Kurdish, Arabic, Persian, Hebrew: drawn by Windows (see `bidi`).
+    if bidi::needs_native(text) {
+        let bold = bidi::is_bold(&font);
+        if let Some(cut) = bidi::paint(ui, rect, text, font.size, bold, color, false) {
+            return cut;
+        }
+    }
     let galley = elided(ui, text, font, color, rect.width());
     let cut = galley.elided;
     ui.painter().galley(
@@ -290,6 +308,12 @@ pub fn text_in(ui: &Ui, rect: Rect, text: &str, font: FontId, color: Color32) ->
 
 /// Like [`text_in`], right-aligned.
 pub fn text_in_right(ui: &Ui, rect: Rect, text: &str, font: FontId, color: Color32) {
+    if bidi::needs_native(text) {
+        let bold = bidi::is_bold(&font);
+        if bidi::paint(ui, rect, text, font.size, bold, color, true).is_some() {
+            return;
+        }
+    }
     let galley = elided(ui, text, font, color, rect.width());
     ui.painter().galley(
         pos2(
@@ -299,6 +323,101 @@ pub fn text_in_right(ui: &Ui, rect: Rect, text: &str, font: FontId, color: Color
         galley,
         color,
     );
+}
+
+/// How wide one line of `text` is, at most `max`. Pairs with [`text_in`].
+pub fn text_width(ui: &Ui, text: &str, font: FontId, max: f32) -> f32 {
+    if bidi::needs_native(text) {
+        if let Some(size) = bidi::measure(ui, text, font.size, bidi::is_bold(&font)) {
+            return size.x.min(max);
+        }
+    }
+    elided(ui, text, font, Color32::WHITE, max).size().x
+}
+
+/// One line of a menu. Like `ui.button`, but a name in a right-to-left
+/// script (a project, a category) is drawn properly.
+pub fn menu_item(ui: &mut Ui, text: &str) -> Response {
+    if !bidi::needs_native(text) {
+        return ui.button(text);
+    }
+    let p = pal(ui);
+    let width = text_width(ui, text, regular(14.0), 320.0) + 16.0;
+    let size = vec2(width.max(ui.available_width()), 28.0);
+    let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
+    if resp.hovered() {
+        ui.painter()
+            .rect_filled(rect, CornerRadius::same(4), p.hover);
+    }
+    text_in(
+        ui,
+        rect.shrink2(vec2(8.0, 0.0)),
+        text,
+        regular(14.0),
+        p.text,
+    );
+    resp
+}
+
+/// One choice in a drop-down list. Like `ui.selectable_label`, with
+/// right-to-left names drawn properly. Returns true when clicked.
+pub fn option_item(ui: &mut Ui, selected: bool, text: &str) -> bool {
+    if !bidi::needs_native(text) {
+        return ui.selectable_label(selected, text).clicked();
+    }
+    let p = pal(ui);
+    let width = text_width(ui, text, regular(14.0), 320.0) + 16.0;
+    let size = vec2(width.max(ui.available_width()), 28.0);
+    let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
+    if selected {
+        ui.painter()
+            .rect_filled(rect, CornerRadius::same(4), p.selected);
+    } else if resp.hovered() {
+        ui.painter()
+            .rect_filled(rect, CornerRadius::same(4), p.hover);
+    }
+    text_in(
+        ui,
+        rect.shrink2(vec2(8.0, 0.0)),
+        text,
+        regular(14.0),
+        p.text,
+    );
+    resp.clicked()
+}
+
+/// The text to hand to a drop-down as its selected text: nothing when the
+/// name is right-to-left, because [`combo_overlay`] then draws it.
+pub fn combo_text(text: &str) -> String {
+    if bidi::needs_native(text) {
+        String::new()
+    } else {
+        text.to_string()
+    }
+}
+
+/// Draws a right-to-left selected name over a closed drop-down.
+pub fn combo_overlay(ui: &Ui, combo: &Response, text: &str) {
+    if bidi::needs_native(text) {
+        let p = pal(ui);
+        let rect = Rect::from_min_max(
+            pos2(combo.rect.left() + 8.0, combo.rect.top()),
+            pos2(combo.rect.right() - 24.0, combo.rect.bottom()),
+        );
+        text_in(ui, rect, text, regular(14.0), p.text);
+    }
+}
+
+/// A one-line text box in the app's style. Right-to-left text is shown
+/// joined and in reading order while it is typed (see `bidi::show_edit`).
+pub fn text_edit(ui: &mut Ui, value: &mut String, hint: &str, width: f32) -> Response {
+    let p = pal(ui);
+    bidi::show_edit(ui, value, 14.0, p.text, |edit| {
+        edit.hint_text(RichText::new(hint).color(p.faint))
+            .desired_width(width)
+            .margin(Margin::symmetric(8, 6))
+    })
+    .response
 }
 
 fn tile_color(name: &str) -> Color32 {

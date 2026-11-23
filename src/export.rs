@@ -1,8 +1,14 @@
-//! Reports and timesheets as CSV, JSON and HTML, and the command-line export.
+//! Reports and timesheets as CSV, JSON and HTML, invoices as HTML, calendar
+//! files (ICS), and the command-line export.
 //!
 //! Everything here is pure: it turns blocks and settings into text. The HTML
 //! is one self-contained file with inline styles and inline SVG; it has no
 //! scripts and refers to nothing outside itself.
+//!
+//! A calendar file has one event per sitting (worked time with no gap longer
+//! than five minutes). Events name the project or category and how the time
+//! was spent, and deliberately leave out window titles and websites:
+//! calendars are often synchronised to other devices and services.
 //!
 //! CSV files start with a UTF-8 byte-order mark and use CRLF line ends, so
 //! that spreadsheet programs open titles in any script correctly. Text cells
@@ -25,6 +31,8 @@ pub enum Format {
     Csv,
     Json,
     Html,
+    /// An iCalendar file, for the activity report only.
+    Ics,
 }
 
 impl Format {
@@ -33,6 +41,7 @@ impl Format {
             "csv" => Some(Format::Csv),
             "json" => Some(Format::Json),
             "html" | "htm" => Some(Format::Html),
+            "ics" | "ical" | "icalendar" => Some(Format::Ics),
             _ => None,
         }
     }
@@ -42,6 +51,7 @@ impl Format {
             Format::Csv => "csv",
             Format::Json => "json",
             Format::Html => "html",
+            Format::Ics => "ics",
         }
     }
 }
@@ -83,6 +93,8 @@ struct Summary<'a> {
     by_project: Vec<(usize, i64)>,
     no_project: i64,
     by_site: Vec<(String, i64)>,
+    /// Worked seconds per tag (a block with two tags counts under both).
+    by_tag: Vec<(String, i64)>,
     days: Vec<DayRow>,
 }
 
@@ -111,6 +123,7 @@ fn summarize<'a>(input: &Input<'a>) -> Summary<'a> {
     let mut by_app: HashMap<(String, String), i64> = HashMap::new();
     let mut by_project: HashMap<usize, i64> = HashMap::new();
     let mut by_site: HashMap<String, i64> = HashMap::new();
+    let mut by_tag: HashMap<String, i64> = HashMap::new();
     let mut day_worked: HashMap<Day, i64> = HashMap::new();
     let mut day_away: HashMap<Day, i64> = HashMap::new();
     let mut day_category: HashMap<(Day, usize), i64> = HashMap::new();
@@ -144,6 +157,9 @@ fn summarize<'a>(input: &Input<'a>) -> Summary<'a> {
         }
         if !block.domain.is_empty() {
             *by_site.entry(block.domain.clone()).or_default() += secs;
+        }
+        for tag in &block.tags {
+            *by_tag.entry(tag.clone()).or_default() += secs;
         }
         split_days(span.start, span.end, input.tz, |d, s| {
             *day_worked.entry(d).or_default() += s;
@@ -196,6 +212,7 @@ fn summarize<'a>(input: &Input<'a>) -> Summary<'a> {
         by_project: sorted_desc(by_project),
         no_project,
         by_site: sorted_desc(by_site),
+        by_tag: sorted_desc(by_tag),
         days,
         entries,
         classifier,
@@ -349,6 +366,9 @@ fn report_json(input: &Input, sum: &Summary) -> String {
         "no_project_seconds": sum.no_project,
         "by_site": sum.by_site.iter().map(|(d, s)| json!({
             "domain": d, "seconds": s,
+        })).collect::<Vec<_>>(),
+        "by_tag": sum.by_tag.iter().map(|(t, s)| json!({
+            "tag": t, "seconds": s,
         })).collect::<Vec<_>>(),
         "by_day": sum.days.iter().map(|d| json!({
             "date": iso_date(d.day),
@@ -613,6 +633,14 @@ fn report_html(input: &Input, sum: &Summary) -> String {
         .collect();
     bar_table(&mut out, "Websites", "Website", &sites, sum.worked);
 
+    let tags: Vec<(String, String, i64)> = sum
+        .by_tag
+        .iter()
+        .take(25)
+        .map(|(t, s)| (format!("#{t}"), "#f5b041".to_string(), *s))
+        .collect();
+    bar_table(&mut out, "Tags", "Tag", &tags, sum.worked);
+
     if sum.worked == 0 {
         out.push_str("<section class=\"card\"><p class=\"muted\">Nothing was recorded in this range.</p></section>\n");
     }
@@ -627,7 +655,170 @@ pub fn report(input: &Input, format: Format) -> String {
         Format::Csv => report_csv(input, &sum),
         Format::Json => report_json(input, &sum),
         Format::Html => report_html(input, &sum),
+        Format::Ics => report_ics(&sum),
     }
+}
+
+// ---------------------------------------------------------------------------
+// Calendar (ICS)
+// ---------------------------------------------------------------------------
+
+/// A longer pause than this ends a sitting.
+const SITTING_GAP: i64 = 5 * 60;
+/// Shorter sittings are left out of the calendar.
+const SITTING_MIN: i64 = 5 * 60;
+
+/// A stretch of worked time with no pause longer than [`SITTING_GAP`].
+struct Sitting {
+    start: i64,
+    end: i64,
+    worked: i64,
+    by_category: HashMap<usize, i64>,
+    by_project: HashMap<usize, i64>,
+}
+
+fn sittings(sum: &Summary) -> Vec<Sitting> {
+    let mut out: Vec<Sitting> = Vec::new();
+    for (span, _) in &sum.entries {
+        let join = out
+            .last()
+            .is_some_and(|last| span.start - last.end <= SITTING_GAP);
+        if !join {
+            out.push(Sitting {
+                start: span.start,
+                end: span.start,
+                worked: 0,
+                by_category: HashMap::new(),
+                by_project: HashMap::new(),
+            });
+        }
+        let Some(sitting) = out.last_mut() else {
+            continue;
+        };
+        sitting.end = sitting.end.max(span.end);
+        sitting.worked += span.secs();
+        *sitting
+            .by_category
+            .entry(span.category as usize)
+            .or_default() += span.secs();
+        if let Some(p) = span.project {
+            *sitting.by_project.entry(p as usize).or_default() += span.secs();
+        }
+    }
+    out.retain(|s| s.worked >= SITTING_MIN);
+    out
+}
+
+/// `20261112T083000Z`
+fn ics_stamp(utc: i64) -> String {
+    let (y, m, d) = civil_from_days(utc.div_euclid(86_400) as Day);
+    let s = utc.rem_euclid(86_400);
+    format!(
+        "{y:04}{m:02}{d:02}T{:02}{:02}{:02}Z",
+        s / 3600,
+        s / 60 % 60,
+        s % 60
+    )
+}
+
+/// Escapes a text value (RFC 5545, 3.3.11).
+pub fn ics_text(text: &str) -> String {
+    let mut out = String::with_capacity(text.len() + 8);
+    for c in text.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            ';' => out.push_str("\\;"),
+            ',' => out.push_str("\\,"),
+            '\n' => out.push_str("\\n"),
+            '\r' => {}
+            c if c.is_control() => out.push(' '),
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+/// Writes one content line, folded so that no line is longer than 75 bytes
+/// (a continuation line starts with a space) and never inside a character.
+fn ics_line(out: &mut String, line: &str) {
+    let mut width = 0;
+    for c in line.chars() {
+        if width + c.len_utf8() > 75 {
+            out.push_str("\r\n ");
+            width = 1;
+        }
+        out.push(c);
+        width += c.len_utf8();
+    }
+    out.push_str("\r\n");
+}
+
+fn report_ics(sum: &Summary) -> String {
+    let c = &sum.classifier;
+    let mut out = String::new();
+    for line in [
+        "BEGIN:VCALENDAR",
+        "VERSION:2.0",
+        concat!(
+            "PRODID:-//Zheer Khalid//HourForge ",
+            env!("CARGO_PKG_VERSION"),
+            "//EN"
+        ),
+        "CALSCALE:GREGORIAN",
+        "METHOD:PUBLISH",
+        "X-WR-CALNAME:HourForge",
+    ] {
+        ics_line(&mut out, line);
+    }
+    for sitting in sittings(sum) {
+        let categories = sorted_desc(sitting.by_category.clone());
+        let projects = sorted_desc(sitting.by_project.clone());
+        // Named after the project when one fills at least half of the
+        // sitting, otherwise after the category with the most time.
+        let top_category = categories
+            .first()
+            .map(|(i, _)| c.categories[*i].name.as_str())
+            .unwrap_or("Work");
+        let summary = match projects.first() {
+            Some((i, secs)) if *secs * 2 >= sitting.worked => c.projects[*i].name.as_str(),
+            _ => top_category,
+        };
+        let list = |rows: &[(usize, i64)], name: &dyn Fn(usize) -> String| {
+            rows.iter()
+                .take(5)
+                .map(|(i, s)| format!("{} {}", name(*i), fmt_dur(*s)))
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        let mut description = format!(
+            "Worked {}.\n{}",
+            fmt_dur(sitting.worked),
+            list(&categories, &|i| c.categories[i].name.clone())
+        );
+        if !projects.is_empty() {
+            description.push_str("\nProjects: ");
+            description.push_str(&list(&projects, &|i| c.projects[i].name.clone()));
+        }
+        ics_line(&mut out, "BEGIN:VEVENT");
+        ics_line(
+            &mut out,
+            &format!(
+                "UID:hourforge-{}-{}@hourforge.invalid",
+                sitting.start, sitting.end
+            ),
+        );
+        ics_line(&mut out, &format!("DTSTAMP:{}", ics_stamp(sitting.end)));
+        ics_line(&mut out, &format!("DTSTART:{}", ics_stamp(sitting.start)));
+        ics_line(&mut out, &format!("DTEND:{}", ics_stamp(sitting.end)));
+        ics_line(&mut out, &format!("SUMMARY:{}", ics_text(summary)));
+        ics_line(&mut out, &format!("DESCRIPTION:{}", ics_text(&description)));
+        ics_line(&mut out, &format!("CATEGORIES:{}", ics_text(top_category)));
+        // Shown in the calendar without blocking the time as busy.
+        ics_line(&mut out, "TRANSP:TRANSPARENT");
+        ics_line(&mut out, "END:VEVENT");
+    }
+    ics_line(&mut out, "END:VCALENDAR");
+    out
 }
 
 // ---------------------------------------------------------------------------
@@ -644,7 +835,9 @@ pub struct TimesheetRow {
     pub secs: i64,
     pub rounded_secs: i64,
     pub rate: f64,
+    /// 0 for projects marked as not billable.
     pub amount: f64,
+    pub billable: bool,
 }
 
 #[derive(Clone, PartialEq, Debug, Default)]
@@ -652,6 +845,8 @@ pub struct Timesheet {
     pub rows: Vec<TimesheetRow>,
     pub total_secs: i64,
     pub total_rounded_secs: i64,
+    /// Rounded seconds on billable projects.
+    pub total_billable_secs: i64,
     pub total_amount: f64,
 }
 
@@ -699,9 +894,17 @@ pub fn timesheet(input: &Input, project: Option<&str>) -> Timesheet {
         let secs = cells[&key];
         let p = &classifier.projects[key.1];
         let rounded_secs = round_secs(secs, ts.rounding, ts.step_minutes);
-        let amount = rounded_secs as f64 / 3600.0 * p.rate;
+        let billable = !p.non_billable;
+        let amount = if billable {
+            rounded_secs as f64 / 3600.0 * p.rate
+        } else {
+            0.0
+        };
         sheet.total_secs += secs;
         sheet.total_rounded_secs += rounded_secs;
+        if billable {
+            sheet.total_billable_secs += rounded_secs;
+        }
         sheet.total_amount += amount;
         sheet.rows.push(TimesheetRow {
             day: key.0,
@@ -712,6 +915,7 @@ pub fn timesheet(input: &Input, project: Option<&str>) -> Timesheet {
             rounded_secs,
             rate: p.rate,
             amount,
+            billable,
         });
     }
     sheet
@@ -736,9 +940,12 @@ fn rounding_note(settings: &Settings) -> String {
 pub fn timesheet_text(sheet: &Timesheet, input: &Input, format: Format) -> String {
     let currency = input.settings.timesheet.currency.as_str();
     match format {
-        Format::Csv => {
+        // A timesheet has no calendar form; it is written as CSV instead.
+        Format::Csv | Format::Ics => {
             let mut out = String::from(BOM);
-            out.push_str("date,project,client,hours,rounded_hours,rate,amount,currency\r\n");
+            out.push_str(
+                "date,project,client,hours,rounded_hours,rate,amount,currency,billable\r\n",
+            );
             for r in &sheet.rows {
                 csv_row(
                     &mut out,
@@ -751,6 +958,7 @@ pub fn timesheet_text(sheet: &Timesheet, input: &Input, format: Format) -> Strin
                         format!("{:.2}", r.rate),
                         format!("{:.2}", r.amount),
                         csv_cell(currency),
+                        if r.billable { "yes" } else { "no" }.to_string(),
                     ],
                 );
             }
@@ -765,6 +973,7 @@ pub fn timesheet_text(sheet: &Timesheet, input: &Input, format: Format) -> Strin
                     String::new(),
                     format!("{:.2}", sheet.total_amount),
                     csv_cell(currency),
+                    String::new(),
                 ],
             );
             out
@@ -788,11 +997,13 @@ pub fn timesheet_text(sheet: &Timesheet, input: &Input, format: Format) -> Strin
                     "hours": r.rounded_secs as f64 / 3600.0,
                     "rate": r.rate,
                     "amount": (r.amount * 100.0).round() / 100.0,
+                    "billable": r.billable,
                 })).collect::<Vec<_>>(),
                 "totals": {
                     "seconds": sheet.total_secs,
                     "rounded_seconds": sheet.total_rounded_secs,
                     "hours": sheet.total_rounded_secs as f64 / 3600.0,
+                    "billable_seconds": sheet.total_billable_secs,
                     "amount": (sheet.total_amount * 100.0).round() / 100.0,
                 },
             });
@@ -819,16 +1030,21 @@ pub fn timesheet_text(sheet: &Timesheet, input: &Input, format: Format) -> Strin
             );
             out.push_str("</div>\n<section class=\"card\"><table><thead><tr><th>Date</th><th>Project</th><th>Client</th><th class=\"n\">Tracked</th><th class=\"n\">Hours</th><th class=\"n\">Rate</th><th class=\"n\">Amount</th></tr></thead><tbody>\n");
             for r in &sheet.rows {
+                let (rate, amount) = if r.billable {
+                    (format!("{:.2}", r.rate), format!("{:.2}", r.amount))
+                } else {
+                    ("not billable".to_string(), "–".to_string())
+                };
                 let _ = writeln!(
                     out,
-                    "<tr><td>{}</td><td>{}</td><td>{}</td><td class=\"n\">{}</td><td class=\"n\">{}</td><td class=\"n\">{:.2}</td><td class=\"n\">{:.2}</td></tr>",
+                    "<tr><td>{}</td><td>{}</td><td>{}</td><td class=\"n\">{}</td><td class=\"n\">{}</td><td class=\"n\">{}</td><td class=\"n\">{}</td></tr>",
                     html_escape(&fmt_day(r.day)),
                     html_escape(&r.project_name),
                     html_escape(&r.client),
                     hm(r.secs),
                     fmt_hours(r.rounded_secs),
-                    r.rate,
-                    r.amount
+                    rate,
+                    amount
                 );
             }
             if sheet.rows.is_empty() {
@@ -851,6 +1067,196 @@ pub fn timesheet_text(sheet: &Timesheet, input: &Input, format: Format) -> Strin
             out
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Invoices
+// ---------------------------------------------------------------------------
+
+/// What an invoice says besides its lines.
+pub struct InvoiceMeta<'a> {
+    /// `INV-20261124`
+    pub number: &'a str,
+    /// The local day the invoice is issued on.
+    pub issued: Day,
+    /// The client. Empty: taken from the projects when they share one client.
+    pub bill_to: &'a str,
+}
+
+/// A number for an invoice issued on `day`: `INV-20261124`.
+pub fn default_invoice_number(day: Day) -> String {
+    let (y, m, d) = civil_from_days(day);
+    format!("INV-{y:04}{m:02}{d:02}")
+}
+
+/// `24 November 2026`
+fn long_date(day: Day) -> String {
+    let (y, m, d) = civil_from_days(day);
+    format!("{d} {} {y}", MONTHS_LONG[m as usize - 1])
+}
+
+/// One line of an invoice: a project's rounded hours at its rate.
+#[derive(Clone, PartialEq, Debug)]
+pub struct InvoiceLine {
+    pub project_name: String,
+    pub client: String,
+    pub rounded_secs: i64,
+    pub rate: f64,
+    pub amount: f64,
+    pub days: usize,
+}
+
+/// The lines of an invoice: the billable projects of a timesheet that have a
+/// rate, in order of first appearance. Hours are the sum of each day's
+/// rounded time, exactly as on the timesheet.
+pub fn invoice_lines(sheet: &Timesheet) -> Vec<InvoiceLine> {
+    let mut lines: Vec<(String, InvoiceLine)> = Vec::new();
+    for r in sheet.rows.iter().filter(|r| r.billable && r.rate > 0.0) {
+        match lines.iter_mut().find(|(id, _)| *id == r.project) {
+            Some((_, line)) => {
+                line.rounded_secs += r.rounded_secs;
+                line.amount += r.amount;
+                line.days += 1;
+            }
+            None => lines.push((
+                r.project.clone(),
+                InvoiceLine {
+                    project_name: r.project_name.clone(),
+                    client: r.client.clone(),
+                    rounded_secs: r.rounded_secs,
+                    rate: r.rate,
+                    amount: r.amount,
+                    days: 1,
+                },
+            )),
+        }
+    }
+    lines.into_iter().map(|(_, line)| line).collect()
+}
+
+const INVOICE_STYLE: &str = "\
+.inv-head{display:flex;justify-content:space-between;align-items:flex-start;gap:24px;margin-bottom:22px}
+.inv-head h1{font-size:34px;letter-spacing:.5px}
+.inv-meta{text-align:right;color:var(--muted)}
+.inv-meta b{color:var(--text);font-size:17px;display:block}
+.parties{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px}
+.parties .card{margin:0}
+.parties small{display:block;color:var(--muted);text-transform:uppercase;letter-spacing:.6px;font-size:11.5px;margin-bottom:4px}
+.parties b{font-size:16px}
+.due{display:flex;justify-content:flex-end;margin:0 0 16px}
+.due div{background:var(--card);border:2px solid var(--accent);border-radius:12px;padding:12px 20px;text-align:right}
+.due span{display:block;color:var(--muted);font-size:13px}
+.due b{font-size:26px}
+.pre{white-space:pre-wrap}
+";
+
+/// An invoice as one self-contained HTML page, made to be printed or saved
+/// as a PDF from the browser.
+pub fn invoice_html(sheet: &Timesheet, input: &Input, meta: &InvoiceMeta) -> String {
+    let ts = &input.settings.timesheet;
+    let currency = html_escape(&ts.currency);
+    let lines = invoice_lines(sheet);
+    let total: f64 = lines.iter().map(|l| l.amount).sum();
+    let hours: i64 = lines.iter().map(|l| l.rounded_secs).sum();
+    // The client: as given, or the one client all the lines share.
+    let mut clients: Vec<&str> = lines
+        .iter()
+        .map(|l| l.client.as_str())
+        .filter(|c| !c.is_empty())
+        .collect();
+    clients.sort_unstable();
+    clients.dedup();
+    let bill_to = if !meta.bill_to.trim().is_empty() {
+        meta.bill_to.trim()
+    } else if clients.len() == 1 {
+        clients[0]
+    } else {
+        ""
+    };
+
+    let mut out = html_head(&format!("Invoice {}", meta.number))
+        .replace("</style>", &format!("{INVOICE_STYLE}</style>"));
+    let _ = writeln!(
+        out,
+        "<div class=\"inv-head\"><h1>Invoice</h1><div class=\"inv-meta\"><b>{}</b>Issued {}<br>Period: {}</div></div>",
+        html_escape(meta.number),
+        html_escape(&long_date(meta.issued)),
+        html_escape(input.label)
+    );
+    let party = |label: &str, name: &str| {
+        format!(
+            "<div class=\"card\"><small>{label}</small><b class=\"pre\">{}</b></div>",
+            if name.trim().is_empty() {
+                "&nbsp;".to_string()
+            } else {
+                html_escape(name.trim())
+            }
+        )
+    };
+    let _ = writeln!(
+        out,
+        "<div class=\"parties\">{}{}</div>",
+        party("From", &ts.business),
+        party("Bill to", bill_to)
+    );
+    out.push_str("<section class=\"card\"><table><thead><tr><th>Description</th><th class=\"n\">Days</th><th class=\"n\">Hours</th><th class=\"n\">Rate</th><th class=\"n\">Amount</th></tr></thead><tbody>\n");
+    for l in &lines {
+        let _ = writeln!(
+            out,
+            "<tr><td>{}</td><td class=\"n\">{}</td><td class=\"n\">{}</td><td class=\"n\">{:.2}</td><td class=\"n\">{:.2}</td></tr>",
+            html_escape(&l.project_name),
+            l.days,
+            fmt_hours(l.rounded_secs),
+            l.rate,
+            l.amount
+        );
+    }
+    if lines.is_empty() {
+        out.push_str("<tr><td colspan=\"5\" class=\"muted\">No billable project time with an hourly rate in this period.</td></tr>\n");
+    }
+    let _ = writeln!(
+        out,
+        "</tbody><tfoot><tr><td>Total</td><td></td><td class=\"n\">{}</td><td></td><td class=\"n\">{total:.2} {currency}</td></tr></tfoot></table></section>",
+        fmt_hours(hours)
+    );
+    let _ = writeln!(
+        out,
+        "<div class=\"due\"><div><span>Amount due</span><b>{total:.2} {currency}</b></div></div>"
+    );
+    // The days behind the lines.
+    let detail: Vec<&TimesheetRow> = sheet
+        .rows
+        .iter()
+        .filter(|r| r.billable && r.rate > 0.0)
+        .collect();
+    if !detail.is_empty() {
+        out.push_str("<section class=\"card\"><h2>Hours per day</h2><table><thead><tr><th>Date</th><th>Project</th><th class=\"n\">Hours</th><th class=\"n\">Amount</th></tr></thead><tbody>\n");
+        for r in detail {
+            let _ = writeln!(
+                out,
+                "<tr><td>{}</td><td>{}</td><td class=\"n\">{}</td><td class=\"n\">{:.2}</td></tr>",
+                html_escape(&fmt_day(r.day)),
+                html_escape(&r.project_name),
+                fmt_hours(r.rounded_secs),
+                r.amount
+            );
+        }
+        out.push_str("</tbody></table></section>\n");
+    }
+    if !ts.invoice_note.trim().is_empty() {
+        let _ = writeln!(
+            out,
+            "<section class=\"card\"><p class=\"pre\" style=\"margin:0\">{}</p></section>",
+            html_escape(ts.invoice_note.trim())
+        );
+    }
+    let _ = writeln!(
+        out,
+        "<p class=\"muted\">{}</p>",
+        html_escape(&rounding_note(input.settings))
+    );
+    out.push_str(HTML_FOOT);
+    out
 }
 
 // ---------------------------------------------------------------------------
@@ -992,6 +1398,7 @@ mod tests {
             rate: 60.0,
             keywords: vec!["harbor".into()],
             archived: false,
+            non_billable: false,
         });
         s.projects.push(Project {
             id: "atlas".into(),
@@ -1001,6 +1408,7 @@ mod tests {
             rate: 0.0,
             keywords: vec!["atlas".into()],
             archived: false,
+            non_billable: false,
         });
         s
     }
@@ -1090,6 +1498,9 @@ mod tests {
         assert_eq!(Format::parse("json"), Some(Format::Json));
         assert_eq!(Format::parse("pdf"), None);
         assert_eq!(Format::Html.extension(), "html");
+        assert_eq!(Format::parse("ICS"), Some(Format::Ics));
+        assert_eq!(Format::parse("ical"), Some(Format::Ics));
+        assert_eq!(Format::Ics.extension(), "ics");
     }
 
     #[test]
@@ -1416,9 +1827,13 @@ mod tests {
                 "1.25",
                 "60.00",
                 "75.00",
-                "USD"
+                "USD",
+                "yes"
             ]
         );
+        assert_eq!(rows[0].last().map(String::as_str), Some("billable"));
+        // A timesheet has no calendar form: asked for one, it is the CSV.
+        assert_eq!(timesheet_text(&sheet, &inp, Format::Ics), csv);
         assert_eq!(rows[4][0], "Total");
         assert_eq!(
             (rows[4][4].as_str(), rows[4][6].as_str()),
@@ -1437,6 +1852,166 @@ mod tests {
         assert!(html.contains("Northwind, Ltd"));
         let none = timesheet_text(&Timesheet::default(), &inp, Format::Html);
         assert!(none.contains("No project time"));
+    }
+
+    /// Joins folded lines again and splits the file into its content lines.
+    fn ics_lines(text: &str) -> Vec<String> {
+        text.replace("\r\n ", "")
+            .split("\r\n")
+            .filter(|l| !l.is_empty())
+            .map(str::to_string)
+            .collect()
+    }
+
+    #[test]
+    fn calendar_has_one_event_per_sitting() {
+        let (blocks, s, tz) = (sample_blocks(), settings(), tz());
+        let ics = report(&input(&blocks, &s, &tz), Format::Ics);
+        // The shape calendar programs insist on.
+        assert!(ics.starts_with("BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:"));
+        assert!(ics.ends_with("END:VCALENDAR\r\n"));
+        assert_eq!(ics.matches('\n').count(), ics.matches("\r\n").count());
+        assert!(
+            ics.split("\r\n").all(|l| l.len() <= 75),
+            "a line is too long"
+        );
+        let lines = ics_lines(&ics);
+        let all = |name: &str| -> Vec<&str> {
+            lines
+                .iter()
+                .filter_map(|l| l.strip_prefix(name))
+                .collect::<Vec<_>>()
+        };
+        // The evening before (a manual entry), the morning (four blocks with
+        // no pause between them) and the meeting. Lunch is not work.
+        assert_eq!(
+            all("DTSTART:"),
+            ["20261111T170000Z", "20261112T080000Z", "20261112T120000Z"]
+        );
+        assert_eq!(
+            all("DTEND:"),
+            ["20261111T181000Z", "20261112T100700Z", "20261112T123000Z"]
+        );
+        // Named after the project that fills the sitting, else the category.
+        assert_eq!(
+            all("SUMMARY:"),
+            ["Harbor redesign", "Development", "Communication"]
+        );
+        let descriptions = all("DESCRIPTION:");
+        assert!(
+            descriptions[1].starts_with("Worked 2h 07m.\\nDevelopment 1h 47m\\, Browsing 20m"),
+            "{}",
+            descriptions[1]
+        );
+        assert!(descriptions[1].contains("\\nProjects: Harbor redesign 40m\\, Atlas 30m"));
+        assert_eq!(all("UID:").len(), 3);
+        assert_eq!(lines.iter().filter(|l| *l == "END:VEVENT").count(), 3);
+        // Calendars travel: no window titles, no websites.
+        for private in [
+            "plan.md",
+            "pier.rs",
+            "=SUM(",
+            "videos.example",
+            "github.com",
+            "Site visit",
+        ] {
+            assert!(!ics.contains(private), "{private} leaked into the calendar");
+        }
+        // Nothing recorded: still a valid, empty calendar.
+        let empty = report(&input(&[], &s, &tz), Format::Ics);
+        assert_eq!(ics_lines(&empty).len(), 7);
+    }
+
+    #[test]
+    fn calendar_text_is_escaped_and_folded() {
+        assert_eq!(ics_text("a,b;c\\d\ne\r\tf"), "a\\,b\\;c\\\\d\\ne f");
+        // Folding never cuts a character in two and loses nothing.
+        let long = format!("SUMMARY:{}", "ڕاپۆرتی مانگانە ".repeat(12));
+        let mut out = String::new();
+        ics_line(&mut out, &long);
+        assert!(out.split("\r\n").count() > 3);
+        assert!(out.split("\r\n").all(|l| l.len() <= 75));
+        assert_eq!(out.replace("\r\n ", "").trim_end_matches("\r\n"), long);
+        assert_eq!(ics_stamp(0), "19700101T000000Z");
+        assert_eq!(ics_stamp(-1), "19691231T235959Z");
+    }
+
+    #[test]
+    fn invoice_lists_billable_projects_with_a_rate() {
+        let (blocks, mut s, tz) = (sample_blocks(), settings(), tz());
+        s.timesheet.business = "Rivers & <Co>".into();
+        s.timesheet.invoice_note = "Payable within 14 days.\nThank you.".into();
+        let issued = days_from_civil(2026, 11, 24);
+        assert_eq!(default_invoice_number(issued), "INV-20261124");
+        let meta = InvoiceMeta {
+            number: "INV-20261124",
+            issued,
+            bill_to: "",
+        };
+        {
+            let inp = input(&blocks, &s, &tz);
+            let sheet = timesheet(&inp, None);
+            assert_eq!(sheet.total_billable_secs, sheet.total_rounded_secs);
+            // Harbor on two days at 60 an hour; Atlas has no rate and is left off.
+            let lines = invoice_lines(&sheet);
+            assert_eq!(lines.len(), 1);
+            assert_eq!(lines[0].project_name, "Harbor redesign");
+            assert_eq!((lines[0].rounded_secs, lines[0].days), (120 * 60, 2));
+            assert!((lines[0].amount - 120.0).abs() < 1e-9);
+            let html = invoice_html(&sheet, &inp, &meta);
+            assert!(html.contains("<h1>Invoice</h1>"));
+            assert!(html.contains("INV-20261124"));
+            assert!(html.contains("Issued 24 November 2026"));
+            assert!(html.contains("Amount due</span><b>120.00 USD</b>"));
+            // The client comes from the project; everything typed is escaped.
+            assert!(html.contains("Northwind, Ltd"));
+            assert!(html.contains("Rivers &amp; &lt;Co&gt;"));
+            assert!(html.contains("Payable within 14 days.\nThank you."));
+            assert!(html.contains("Hours per day"));
+            assert!(!html.contains("Atlas"));
+            // Self-contained, like every other export.
+            let lower = html.to_lowercase();
+            assert!(!lower.contains("http") && !lower.contains("<script"));
+            // A client typed in the dialog wins.
+            let named = InvoiceMeta {
+                bill_to: " Pier 9 GmbH ",
+                ..meta
+            };
+            assert!(invoice_html(&sheet, &inp, &named).contains("<b class=\"pre\">Pier 9 GmbH</b>"));
+        }
+        // Marked as not billable: tracked, never charged.
+        s.projects[0].non_billable = true;
+        let inp = input(&blocks, &s, &tz);
+        let sheet = timesheet(&inp, None);
+        assert_eq!(sheet.total_rounded_secs, 150 * 60);
+        assert_eq!(sheet.total_billable_secs, 30 * 60);
+        assert_eq!(sheet.total_amount, 0.0);
+        assert!(!sheet.rows[0].billable && sheet.rows[2].billable);
+        assert!(invoice_lines(&sheet).is_empty());
+        assert!(invoice_html(&sheet, &inp, &meta).contains("No billable project time"));
+        let csv = parse_csv(&timesheet_text(&sheet, &inp, Format::Csv));
+        assert_eq!(csv[1].last().map(String::as_str), Some("no"));
+        assert_eq!(csv[1][6], "0.00");
+        assert!(timesheet_text(&sheet, &inp, Format::Html).contains("not billable"));
+        let v: serde_json::Value =
+            serde_json::from_str(&timesheet_text(&sheet, &inp, Format::Json)).unwrap();
+        assert_eq!(v["rows"][0]["billable"], false);
+        assert_eq!(v["totals"]["billable_seconds"], 30 * 60);
+    }
+
+    #[test]
+    fn reports_total_the_time_per_tag() {
+        let (blocks, s, tz) = (sample_blocks(), settings(), tz());
+        let inp = input(&blocks, &s, &tz);
+        let v: serde_json::Value = serde_json::from_str(&report(&inp, Format::Json)).unwrap();
+        let tags = v["by_tag"].as_array().unwrap();
+        // The manual entry (70 minutes) carries both tags.
+        assert_eq!(tags.len(), 2);
+        assert_eq!(tags[0]["tag"], "billable");
+        assert_eq!(tags[0]["seconds"], 70 * 60);
+        assert_eq!(tags[1]["tag"], "offline");
+        let html = report(&inp, Format::Html);
+        assert!(html.contains("<h2>Tags</h2>") && html.contains("#offline"));
     }
 
     #[test]

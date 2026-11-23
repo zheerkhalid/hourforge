@@ -6,6 +6,7 @@ use super::dialogs::{Dialog, ExportKind};
 use super::goals::GoalsState;
 use super::privacy::PrivacyState;
 use super::reports::ReportsView;
+use super::review::ReviewState;
 use super::rules_view::{CatsState, ProjectsState};
 use super::settings_view::SettingsState;
 use super::theme::{self, pal, pal_ctx, regular, semibold, Icon};
@@ -52,6 +53,8 @@ pub enum Tab {
     Today,
     Timeline,
     Reports,
+    /// Programs and websites that no rule has sorted yet.
+    Review,
     Categories,
     Projects,
     Goals,
@@ -242,6 +245,7 @@ pub struct App {
     today_view: TodayView,
     reports_view: ReportsView,
     pub(super) timeline: TimelineState,
+    pub(super) review: ReviewState,
     pub(super) cats: CatsState,
     pub(super) projects: ProjectsState,
     pub(super) goals: GoalsState,
@@ -338,6 +342,7 @@ impl App {
             today_view: TodayView::default(),
             reports_view: ReportsView::default(),
             timeline: TimelineState::default(),
+            review: ReviewState::default(),
             cats: CatsState::default(),
             projects: ProjectsState::default(),
             goals: GoalsState::default(),
@@ -395,6 +400,43 @@ impl App {
                     self.timeline.highlight = Some(b.id);
                     self.dialog = Some(Dialog::edit(b, &self.tz));
                 }
+            }
+            "timeline-rtl" | "timeline-search" => {
+                // The demo with Kurdish and Arabic titles and a Kurdish project.
+                self.tab = Tab::Timeline;
+                if self.demo {
+                    if let Ok(mut store) = self.shared.store.lock() {
+                        crate::demo::showcase_rtl(&mut store, &mut self.settings);
+                    }
+                    if view == "timeline-search" {
+                        self.timeline.search = "ماڵپەڕ".to_string();
+                    }
+                }
+            }
+            "review" => {
+                self.tab = Tab::Review;
+                if self.demo {
+                    if let Ok(mut store) = self.shared.store.lock() {
+                        crate::demo::showcase_review(&mut store);
+                    }
+                }
+            }
+            "shortcuts" => self.dialog = Some(Dialog::Shortcuts),
+            "invoice" => {
+                self.tab = Tab::Projects;
+                if self.demo {
+                    self.settings.timesheet.business = "Alex Rivers Studio".into();
+                }
+                self.dialog = Some(Dialog::export(
+                    timeutil::month_start(today),
+                    today,
+                    ExportKind::Invoice,
+                    None,
+                ));
+            }
+            "reports-last-week" => {
+                self.tab = Tab::Reports;
+                self.reports_view.open_week(today - 7);
             }
             "categories" => self.tab = Tab::Categories,
             "projects" => self.tab = Tab::Projects,
@@ -709,18 +751,18 @@ impl App {
             }
             TrackState::Off => (p.faint, "Not tracking".to_string()),
         };
-        let galley = widgets::elided(ui, &text, semibold(12.5), color, 230.0);
-        let size = vec2(galley.size().x + 34.0, 26.0);
+        let width = widgets::text_width(ui, &text, semibold(12.5), 230.0);
+        let size = vec2(width + 34.0, 26.0);
         let (rect, resp) = ui.allocate_exact_size(size, Sense::hover());
         ui.painter()
             .rect_filled(rect, CornerRadius::same(13), color.gamma_multiply(0.14));
         ui.painter()
             .circle_filled(rect.left_center() + vec2(13.0, 0.0), 4.0, color);
-        ui.painter().galley(
-            egui::pos2(rect.left() + 23.0, rect.center().y - galley.size().y / 2.0),
-            galley,
-            color,
+        let text_rect = Rect::from_min_max(
+            egui::pos2(rect.left() + 23.0, rect.top()),
+            egui::pos2(rect.left() + 23.0 + width + 1.0, rect.bottom()),
         );
+        widgets::text_in(ui, text_rect, &text, semibold(12.5), color);
         resp.on_hover_text(
             "What the tracker is doing right now. Everything it records stays in a folder on this PC.",
         );
@@ -848,12 +890,7 @@ impl App {
                 ))
                 .clicked()
             {
-                let task = self.timer_task.trim().to_string();
-                self.settings.last_task = task.clone();
-                self.send(Cmd::StartTimer {
-                    task,
-                    project: self.settings.last_task_project.clone(),
-                });
+                self.toggle_timer();
             }
             // Project of the task.
             let shown = match self.settings.last_task_project.as_deref() {
@@ -863,34 +900,137 @@ impl App {
                 _ => "No project".to_string(),
             };
             let mut pick: Option<Option<String>> = None;
-            ui.menu_button(RichText::new(shown).color(p.muted), |ui| {
+            // A right-to-left project name is drawn over an empty button.
+            let button_text = if super::bidi::needs_native(&shown) {
+                " ".repeat(
+                    ((widgets::text_width(ui, &shown, regular(14.0), 160.0) / 4.0) as usize).max(4),
+                )
+            } else {
+                shown.clone()
+            };
+            let menu = ui.menu_button(RichText::new(button_text).color(p.muted), |ui| {
                 ui.set_min_width(190.0);
                 if ui.button("No project").clicked() {
                     pick = Some(None);
                     ui.close_menu();
                 }
                 for pr in self.settings.projects.iter().filter(|x| !x.archived) {
-                    if ui.button(&pr.name).clicked() {
+                    if widgets::menu_item(ui, &pr.name).clicked() {
                         pick = Some(Some(pr.id.clone()));
                         ui.close_menu();
                     }
                 }
             });
+            if super::bidi::needs_native(&shown) {
+                let rect = menu.response.rect.shrink2(vec2(6.0, 0.0));
+                widgets::text_in(ui, rect, &shown, regular(14.0), p.muted);
+            }
             if let Some(value) = pick {
                 self.settings.last_task_project = value;
             }
-            ui.add(
-                egui::TextEdit::singleline(&mut self.timer_task)
-                    .hint_text(RichText::new("What are you working on?").color(p.faint))
+            super::bidi::show_edit(ui, &mut self.timer_task, 14.5, p.text, |edit| {
+                edit.hint_text(RichText::new("What are you working on?").color(p.faint))
                     .desired_width(200.0)
                     .margin(Margin::symmetric(10, 7))
-                    .font(regular(14.5)),
-            );
+                    .font(regular(14.5))
+            });
+        }
+    }
+
+    /// Starts the timer with the task typed in the header, or stops it.
+    fn toggle_timer(&mut self) {
+        if self.status.timer.is_some() {
+            self.send(Cmd::StopTimer);
+            return;
+        }
+        let task = self.timer_task.trim().to_string();
+        self.settings.last_task = task.clone();
+        self.send(Cmd::StartTimer {
+            task,
+            project: self.settings.last_task_project.clone(),
+        });
+    }
+
+    /// Keyboard shortcuts (listed in [`SHORTCUTS`], shown with F1).
+    fn shortcuts(&mut self, ctx: &egui::Context) {
+        use egui::{Key, Modifiers};
+        if self.shot.is_some() {
+            return;
+        }
+        let pressed = |m: Modifiers, k: Key| ctx.input_mut(|i| i.consume_key(m, k));
+        if pressed(Modifiers::NONE, Key::F1) {
+            if matches!(self.dialog, Some(Dialog::Shortcuts)) {
+                self.dialog = None;
+            } else if self.dialog.is_none() {
+                self.dialog = Some(Dialog::Shortcuts);
+            }
+        }
+        if self.dialog.is_some() || self.about_open {
+            return;
+        }
+        const PAGES: [(Key, Tab); 9] = [
+            (Key::Num1, Tab::Today),
+            (Key::Num2, Tab::Timeline),
+            (Key::Num3, Tab::Reports),
+            (Key::Num4, Tab::Review),
+            (Key::Num5, Tab::Categories),
+            (Key::Num6, Tab::Projects),
+            (Key::Num7, Tab::Goals),
+            (Key::Num8, Tab::Privacy),
+            (Key::Num9, Tab::Settings),
+        ];
+        for (key, tab) in PAGES {
+            if pressed(Modifiers::COMMAND, key) {
+                self.tab = tab;
+            }
+        }
+        let today = self.today();
+        // The day in view, for the shortcuts that act on one.
+        let day = match self.tab {
+            Tab::Today => self.today_view.day_shown(today),
+            Tab::Timeline => self.timeline.day.unwrap_or(today),
+            _ => today,
+        };
+        if pressed(Modifiers::COMMAND, Key::E) {
+            self.dialog = Some(Dialog::export(day, day, ExportKind::Report, None));
+        }
+        if pressed(Modifiers::COMMAND, Key::N) {
+            self.tab = Tab::Timeline;
+            self.timeline.day = Some(day);
+            self.dialog = Some(Dialog::manual(day, self.now(), &self.tz));
+        }
+        if pressed(Modifiers::COMMAND, Key::F) {
+            self.tab = Tab::Timeline;
+            self.timeline.focus_search = true;
+        }
+        if pressed(Modifiers::COMMAND, Key::T) {
+            self.toggle_timer();
+        }
+        let step = if pressed(Modifiers::ALT, Key::ArrowLeft) {
+            Some(day - 1)
+        } else if pressed(Modifiers::ALT, Key::ArrowRight) {
+            Some((day + 1).min(today))
+        } else if pressed(Modifiers::ALT, Key::Home) {
+            Some(today)
+        } else {
+            None
+        };
+        if let Some(target) = step {
+            match self.tab {
+                Tab::Today => self.today_view.show_day(target, today),
+                Tab::Timeline if self.timeline.day != Some(target) => {
+                    self.timeline.day = Some(target);
+                    self.timeline.checked.clear();
+                }
+                _ => {}
+            }
         }
     }
 
     fn rail(&mut self, ctx: &egui::Context) {
         let p = pal_ctx(ctx);
+        self.review_load();
+        let waiting = self.review.rows.len();
         egui::SidePanel::left("rail")
             .exact_width(208.0)
             .resizable(false)
@@ -907,10 +1047,11 @@ impl App {
                     Stroke::new(1.0_f32, p.border),
                 );
                 ui.spacing_mut().item_spacing.y = 4.0;
-                let items: [(Tab, Icon, &str); 8] = [
+                let items: [(Tab, Icon, &str); 9] = [
                     (Tab::Today, Icon::HOME, "Today"),
                     (Tab::Timeline, Icon::LIST, "Timeline"),
                     (Tab::Reports, Icon::CHART, "Reports"),
+                    (Tab::Review, Icon::CHECK, "Review"),
                     (Tab::Categories, Icon::TAG, "Categories"),
                     (Tab::Projects, Icon::BRIEFCASE, "Projects"),
                     (Tab::Goals, Icon::FLAG, "Goals & focus"),
@@ -958,6 +1099,38 @@ impl App {
                         },
                         fg,
                     );
+                    if tab == Tab::Review && waiting > 0 {
+                        // How many programs and websites wait to be sorted.
+                        let badge = Rect::from_min_max(
+                            egui::pos2(rect.right() - 44.0, rect.top()),
+                            egui::pos2(rect.right() - 8.0, rect.bottom()),
+                        );
+                        let text = if waiting > 99 {
+                            "99+".to_string()
+                        } else {
+                            waiting.to_string()
+                        };
+                        let galley =
+                            ui.painter()
+                                .layout_no_wrap(text, semibold(11.5), p.accent);
+                        let pill = Rect::from_center_size(
+                            egui::pos2(badge.right() - galley.size().x / 2.0 - 7.0, badge.center().y),
+                            vec2(galley.size().x + 14.0, 20.0),
+                        );
+                        ui.painter().rect_filled(
+                            pill,
+                            CornerRadius::same(10),
+                            p.accent.gamma_multiply(0.16),
+                        );
+                        ui.painter().galley(
+                            egui::pos2(
+                                pill.center().x - galley.size().x / 2.0,
+                                pill.center().y - galley.size().y / 2.0,
+                            ),
+                            galley,
+                            p.accent,
+                        );
+                    }
                     if resp.clicked() {
                         self.tab = tab;
                     }
@@ -997,6 +1170,7 @@ impl App {
         }
         let p = pal_ctx(ctx);
         let mut close = false;
+        let mut shortcuts = false;
         let modal = egui::Modal::new(egui::Id::new("about"))
             .frame(
                 Frame::new()
@@ -1052,13 +1226,29 @@ impl App {
                             .color(p.faint),
                     );
                     ui.add_space(14.0);
-                    if widgets::primary_button(ui, "Close", true).clicked() {
-                        close = true;
-                    }
+                    ui.allocate_ui_with_layout(
+                        vec2(250.0, 36.0),
+                        Layout::left_to_right(Align::Center),
+                        |ui| {
+                            if widgets::ghost_button(ui, "Keyboard shortcuts")
+                                .on_hover_text("Also with F1")
+                                .clicked()
+                            {
+                                close = true;
+                                shortcuts = true;
+                            }
+                            if widgets::primary_button(ui, "Close", true).clicked() {
+                                close = true;
+                            }
+                        },
+                    );
                 });
             });
         if close || modal.should_close() {
             self.about_open = false;
+        }
+        if shortcuts {
+            self.dialog = Some(Dialog::Shortcuts);
         }
     }
 
@@ -1096,6 +1286,31 @@ impl App {
     }
 }
 
+/// Every keyboard shortcut, as shown in the list that F1 opens.
+pub const SHORTCUTS: [(&str, &str); 12] = [
+    (
+        "Ctrl+1 … Ctrl+9",
+        "Open a page, in the order of the list on the left",
+    ),
+    (
+        "Alt+←  /  Alt+→",
+        "Previous / next day (Today and Timeline)",
+    ),
+    ("Alt+Home", "Back to today"),
+    ("Ctrl+F", "Search the day in the timeline"),
+    ("Ctrl+N", "Add time by hand"),
+    ("Ctrl+E", "Export the day in view"),
+    ("Ctrl+T", "Start or stop the timer"),
+    ("Double-click a row", "Edit that block in the timeline"),
+    ("Enter", "Confirm a form (never a deletion)"),
+    ("Esc", "Close a dialog or a menu"),
+    ("F1", "Show this list"),
+    (
+        "Timer hotkey",
+        "Works everywhere in Windows; set it in Settings",
+    ),
+];
+
 /// The standard page header: title, subtitle and right-aligned actions.
 pub fn page_header(ui: &mut Ui, title: &str, subtitle: &str, actions: impl FnOnce(&mut Ui)) {
     let p = pal(ui);
@@ -1119,6 +1334,7 @@ impl eframe::App for App {
             self.icons.poll(ctx, &self.shared);
         }
 
+        self.shortcuts(ctx);
         self.header(ctx);
         self.rail(ctx);
 
@@ -1156,6 +1372,7 @@ impl eframe::App for App {
                     }
                 }
                 Tab::Timeline => self.timeline_ui(ui),
+                Tab::Review => self.review_ui(ui),
                 Tab::Categories => self.categories_ui(ui),
                 Tab::Projects => self.projects_ui(ui),
                 Tab::Goals => self.goals_ui(ui),
